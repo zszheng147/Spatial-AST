@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from torch._six import inf
+from torch import inf
 
 
 class SmoothedValue(object):
@@ -232,7 +232,7 @@ def init_distributed_mode(args):
         args.gpu = args.rank % torch.cuda.device_count()
     else:
         print('Not using distributed mode')
-        setup_for_distributed(is_master=True)  # hack
+        # setup_for_distributed(is_master=True)  # hack
         args.distributed = False
         return
 
@@ -245,7 +245,7 @@ def init_distributed_mode(args):
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
+    # setup_for_distributed(args.rank == 0)
 
 
 class NativeScalerWithGradNormCount:

@@ -14,8 +14,8 @@ from typing import Iterable
 
 import torch
 
-import util.misc as misc
-import util.lr_sched as lr_sched
+import utils.misc as misc
+import utils.lr_sched as lr_sched
 
 
 def train_one_epoch(model: torch.nn.Module,
@@ -38,17 +38,20 @@ def train_one_epoch(model: torch.nn.Module,
 
     # set model epoch
     model.epoch = epoch
-    for data_iter_step, (samples, _labels, _vids) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (batch) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
-
-
         #print(samples.shape)# 64x3x224x224 for img, 64x1x512x128 for audio
-        samples = samples.to(device, non_blocking=True)
-        
+        waveforms, reverbs = batch[0], batch[1]
+        targets, spaital_targets = batch[2], batch[3]
+
+        distance = spaital_targets['distance'].long().to(device)
+        azimuth = spaital_targets['azimuth'].long().to(device)
+        elevation = spaital_targets['elevation'].long().to(device)
+
         # comment out when not debugging
         # from fvcore.nn import FlopCountAnalysis, parameter_count_table
         # if data_iter_step == 1:
@@ -57,8 +60,9 @@ def train_one_epoch(model: torch.nn.Module,
         #     print(parameter_count_table(model))
 
 
-        with torch.cuda.amp.autocast():
-            loss_a, _, _, _ = model(samples, mask_ratio=args.mask_ratio)
+        # with torch.cuda.amp.autocast():
+        loss_a, _, _, _ = model(waveforms, reverbs, mask_ratio=args.mask_ratio)
+        
         loss_value = loss_a.item()
         loss_total = loss_a
 

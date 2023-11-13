@@ -11,12 +11,28 @@
 
 from functools import partial
 
+import numpy as np
+
 import torch
 import torch.nn as nn
-import numpy as np
+import torchaudio
+
 import timm.models.vision_transformer
 from timm.models.vision_transformer import PatchEmbed, Block
-from util.patch_embed import PatchEmbed_new, PatchEmbed3D_new
+
+from utils.patch_embed import PatchEmbed_new, PatchEmbed3D_new
+from utils.stft import STFT, LogmelFilterBank
+
+class PhaseSpectrogramReducer(nn.Module):
+    def __init__(self, n_bins, n_mels):
+        super().__init__()
+        self.phase_matrix = nn.Parameter(torch.randn(n_bins, n_mels))
+
+    def forward(self, x):
+        sin_part = torch.matmul(torch.sin(x), self.phase_matrix)
+        cos_part = torch.matmul(torch.cos(x), self.phase_matrix)
+        reduced_phase = torch.atan2(sin_part, cos_part)
+        return reduced_phase
 
 
 class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
@@ -24,6 +40,16 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
     """
     def __init__(self, global_pool=False, mask_2d=True, use_custom_patch=False, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
+        self.spectrogram_extractor = STFT(
+            n_fft=1024, hop_length=320, win_length=1024, window='hann', 
+            center=True, pad_mode='reflect', freeze_parameters=True
+        )
+
+        self.logmel_extractor = LogmelFilterBank(
+            sr=32000, n_fft=1024, n_mels=128, fmin=50, 
+            fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
+        )
+        self.phase_extractor = PhaseSpectrogramReducer(*self.logmel_extractor.melW.shape)
 
         self.global_pool = global_pool
         if self.global_pool:
@@ -33,9 +59,8 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         del self.norm  # remove the original norm
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
-        num_heads=12
-        depth=12
-        mlp_ratio=4
+        self.target_frame = 1024
+
 
     def forward_features(self, x):
         B = x.shape[0]
@@ -175,7 +200,21 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
 
     # overwrite original timm
-    def forward(self, x, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
+    def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
+        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        B, C, T = waveforms.shape
+
+        waveforms = waveforms.reshape(B * C, T)
+    
+        real, imag = self.spectrogram_extractor(waveforms) 
+        logmel_features = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        phase_features = self.phase_extractor(torch.atan2(imag, real)).reshape(B, C, -1, 128)
+        del real, imag
+        
+        x = torch.cat([logmel_features, phase_features], dim=1)
+        if x.shape[2] < self.target_frame:
+            x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
+
         if mask_t_prob > 0.0 or mask_f_prob > 0.0:
             x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
         else:

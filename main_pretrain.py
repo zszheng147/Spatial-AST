@@ -27,14 +27,14 @@ import timm
 assert timm.__version__ == "0.3.2"  # version check
 import timm.optim.optim_factory as optim_factory
 
-import util.misc as misc
-from util.pos_embed import interpolate_pos_embed, interpolate_pos_embed_audio, interpolate_patch_embed_audio
-from util.misc import NativeScalerWithGradNormCount as NativeScaler
+import utils.misc as misc
+from utils.pos_embed import interpolate_pos_embed, interpolate_pos_embed_audio, interpolate_patch_embed_audio
+from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 
 import models_mae
 
 from engine_pretrain import train_one_epoch
-from dataset import AudiosetDataset
+from data.dataset import MultichannelDataset
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -185,7 +185,7 @@ def main(args):
                       'std':norm_stats[args.dataset][1],
                       'multilabel':multilabel_dataset[args.dataset],
                       'noise':False}
-        dataset_train = AudiosetDataset(args.data_train, label_csv=args.label_csv, audio_conf=audio_conf, roll_mag_aug=args.roll_mag_aug,
+        dataset_train = MultichannelDataset(args.data_train, label_csv=args.label_csv, audio_conf=audio_conf, roll_mag_aug=args.roll_mag_aug,
                                         load_video=args.load_video)
     #print(dataset_train)
 

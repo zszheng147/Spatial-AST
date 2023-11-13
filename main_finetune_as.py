@@ -1,48 +1,32 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-# --------------------------------------------------------
-# References:
-# DeiT: https://github.com/facebookresearch/deit
-# BEiT: https://github.com/microsoft/unilm/tree/master/beit
-# --------------------------------------------------------
-
 import argparse
 import datetime
 import json
-import numpy as np
 import os
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
-import torch.nn as nn
 import torch.backends.cudnn as cudnn
+import torch.nn as nn
+import timm
+from torch.utils.data import WeightedRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
-import timm
-
-assert timm.__version__ == "0.3.2" # version check
-from timm.models.layers import trunc_normal_
 from timm.data.mixup import Mixup
-from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
-from timm.models.layers import to_2tuple
-
-import util.lr_decay as lrd
-import util.misc as misc
-from util.datasets import build_dataset
-from util.pos_embed import interpolate_pos_embed, interpolate_pos_embed_audio, interpolate_patch_embed_audio, interpolate_pos_embed_img2audio
-from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from timm.loss import SoftTargetCrossEntropy
+from timm.models.layers import to_2tuple, trunc_normal_
 
 import models_vit
+from engine_finetune_as import evaluate, train_one_epoch
+from data.dataset import DistributedSamplerWrapper, DistributedWeightedSampler, MultichannelDataset
+import utils.lr_decay as lrd
+import utils.misc as misc
+from utils.datasets import build_dataset
+from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 
-from engine_finetune_as import train_one_epoch, evaluate #, train_one_epoch_av, evaluate_av
-from dataset import AudiosetDataset, DistributedWeightedSampler, DistributedSamplerWrapper
-from timm.models.vision_transformer import PatchEmbed
+assert timm.__version__ == "0.3.2"  # version check
 
-from torch.utils.data import WeightedRandomSampler
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning for image classification', add_help=False)
@@ -84,8 +68,6 @@ def get_args_parser():
     # Augmentation parameters
     parser.add_argument('--color_jitter', type=float, default=None, metavar='PCT',
                         help='Color jitter factor (enabled only when not using Auto/RandAug)')
-    parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME',
-                        help='Use AutoAugment policy. "v0" or "original". " + "(default: rand-m9-mstd0.5-inc1)'),
     parser.add_argument('--smoothing', type=float, default=0.1,
                         help='Label smoothing (default: 0.1)')
 
@@ -122,14 +104,14 @@ def get_args_parser():
                         help='Use class token instead of global pool for classification')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
+    parser.add_argument('--data_path', default='/path/to/dataset', type=str,
                         help='dataset path')
     parser.add_argument('--nb_classes', default=527, type=int,
                         help='number of the classification types')
 
-    parser.add_argument('--output_dir', default='./output_dir',
+    parser.add_argument('--output_dir', default='./outputs',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--log_dir', default='./output_dir',
+    parser.add_argument('--log_dir', default='./outputs',
                         help='path where to tensorboard log')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -158,11 +140,11 @@ def get_args_parser():
                         help='url used to set up distributed training')
 
     # For audioset
-    parser.add_argument('--audio_exp', action='store_true', help='audio exp')
-    parser.add_argument("--data_train", type=str, default='/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/train_video.json', help="training data json")
-    parser.add_argument("--data_eval", type=str, default='/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/eval_video.json', help="validation data json")
-    parser.add_argument("--label_csv", type=str, default='/checkpoint/berniehuang/ast/egs/audioset/data/class_labels_indices.csv', help="csv with class labels")
-    parser.add_argument("--weight_csv", type=str, default='/checkpoint/berniehuang/mae/data/audioset/weight_train_all.csv', help="weight file")
+    parser.add_argument('--audio_exp', action='store_false', default=True, help='audio exp')
+    parser.add_argument("--audioset_train", type=str, default='/path/to/train', help="training data json")
+    parser.add_argument("--audioset_eval", type=str, default='/path/to/eval', help="validation data json")
+    parser.add_argument("--label_csv", type=str, default='/saltpool0/data/zhisheng/audioset/class_labels_indices.csv', help="csv with class labels")
+    parser.add_argument("--weight_csv", type=str, default='/path/to/weight', help="weight file")
     
     parser.add_argument('--freqm', help='frequency mask max length', type=int, default=192)
     parser.add_argument('--timem', help='time mask max length', type=int, default=48)
@@ -170,26 +152,28 @@ def get_args_parser():
     parser.add_argument("--dataset", type=str, default="audioset", help="the dataset used", choices=["audioset", "esc50", "speechcommands", "k400"])
     parser.add_argument("--use_fbank", type=bool, default=False)
     parser.add_argument("--use_soft", type=bool, default=False)
-    parser.add_argument("--fbank_dir", type=str, default="/checkpoint/berniehuang/ast/egs/esc50/data/ESC-50-master/fbank", help="fbank dir") 
-    parser.set_defaults(audio_exp=True)
+    parser.add_argument("--fbank_dir", type=str, default="/path/to/fbank", help="fbank dir") 
+
     #parser.add_argument("--distributed", type=bool, default=True)
     parser.add_argument('--first_eval_ep', default=0, type=int, help='do eval after first_eval_ep')
-    parser.add_argument('--use_custom_patch', type=bool, default=False, help='use custom patch with overlapping and override timm PatchEmbed')
-    parser.add_argument('--source_custom_patch', type=bool, default=False, help='the pre-trained model already use custom patch')
-    parser.add_argument('--roll_mag_aug', type=bool, default=False, help='use roll_mag_aug')
+    parser.add_argument('--use_custom_patch', action='store_true', default=False, help='use custom patch with overlapping and override timm PatchEmbed')
+    parser.add_argument('--source_custom_patch', action='store_true', default=False, help='the pre-trained model already use custom patch')
+    parser.add_argument('--roll_mag_aug', action='store_true', default=False, help='use roll_mag_aug')
     parser.add_argument('--mask_t_prob', default=0.0, type=float, help='T masking ratio (percentage of removed patches).') #  
     parser.add_argument('--mask_f_prob', default=0.0, type=float, help='F masking ratio (percentage of removed patches).') #  
     #parser.add_argument('--split_pos', type=bool, default=False, help='use splitted pos emb')
-    parser.add_argument('--weight_sampler', type=bool, default=False, help='use weight_sampler')
+    parser.add_argument('--weight_sampler', action='store_true', default=False, help='use weight_sampler')
     parser.add_argument('--epoch_len', default=200000, type=int, help='num of samples/epoch with weight_sampler')
-    parser.add_argument('--distributed_wrapper', type=bool, default=False, help='use distributedwrapper for weighted sampler')
-    parser.add_argument('--replacement', type=bool, default=False, help='use weight_sampler')
-    parser.add_argument('--mask_2d', type=bool, default=True, help='use 2d masking')
-    parser.add_argument('--load_video', type=bool, default=False, help='load video')
-    parser.add_argument('--av_fusion', type=bool, default=False, help='load video')
-    parser.add_argument('--n_frm', default=6, type=int, help='num of frames for video')
-    parser.add_argument('--replace_with_mae', type=bool, default=False, help='replace_with_mae')
-    parser.add_argument('--load_imgnet_pt', type=bool, default=False, help='when img_pt_ckpt, if load_imgnet_pt, use img_pt_ckpt to initialize audio branch, if not, keep audio branch random')
+    parser.add_argument('--distributed_wrapper', action='store_true', default=False, help='use distributedwrapper for weighted sampler')
+    parser.add_argument('--replacement', action='store_true', default=False, help='use weight_sampler')
+    parser.add_argument('--mask_2d', action='store_true', default=True, help='use 2d masking')
+    parser.add_argument('--replace_with_mae', action='store_true', default=False, help='replace_with_mae')
+    parser.add_argument('--load_imgnet_pt', action='store_true', default=False, help='when img_pt_ckpt, if load_imgnet_pt, use img_pt_ckpt to initialize audio branch, if not, keep audio branch random')
+    
+    parser.add_argument('--reverb_type', type=str, default='BINAURAL', choices=['BINAURAL', 'MONO'], help='reverb type')
+    parser.add_argument('--reverb_train_json', type=str, default='/path/to/reverberation.json', help='reverb train json')
+    parser.add_argument('--reverb_val_json', type=str, default='/path/to/reverberation.json', help='reverb val json')
+
     return parser
 
 
@@ -205,6 +189,7 @@ class PatchEmbed_new(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
         
+        self.in_chans = in_chans
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) # with overlapped patches
         #self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
@@ -217,7 +202,7 @@ class PatchEmbed_new(nn.Module):
 
     def get_output_shape(self, img_size):
         # todo: don't be lazy..
-        return self.proj(torch.randn(1,1,img_size[0],img_size[1])).shape 
+        return self.proj(torch.randn(1, self.in_chans, img_size[0],img_size[1])).shape 
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -251,80 +236,89 @@ def main(args):
                       'esc50':[-6.6268077, 5.358466], 'speechcommands':[-6.845978, 5.5654526]}
         target_length = {'audioset':1024, 'k400':1024, 'esc50':512, 'speechcommands':128}
         multilabel_dataset = {'audioset': True, 'esc50': False, 'k400': False, 'speechcommands': True}
-        audio_conf_train = {'num_mel_bins': 128, 
-                      'target_length': target_length[args.dataset], 
-                      'freqm': 48,
-                      'timem': 192,
-                      'mixup': args.mixup,
-                      'dataset': args.dataset,
-                      'mode':'train',
-                      'mean':norm_stats[args.dataset][0],
-                      'std':norm_stats[args.dataset][1],
-                      'noise':False,
-                      'multilabel':multilabel_dataset[args.dataset],
-                      }
-        audio_conf_val = {'num_mel_bins': 128, 
-                      'target_length': target_length[args.dataset], 
-                      'freqm': 0,
-                      'timem': 0,
-                      'mixup': 0,
-                      'dataset': args.dataset,
-                      'mode':'val',
-                      'mean':norm_stats[args.dataset][0],
-                      'std':norm_stats[args.dataset][1],
-                      'noise':False,
-                      'multilabel':multilabel_dataset[args.dataset],
-                      }  
-        dataset_train = AudiosetDataset(args.data_train, label_csv=args.label_csv, audio_conf=audio_conf_train, 
-                                        use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
-                                        roll_mag_aug=args.roll_mag_aug, load_video=args.load_video, mode='train')
-        dataset_val = AudiosetDataset(args.data_eval, label_csv=args.label_csv, audio_conf=audio_conf_val, 
-                                        use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
-                                        roll_mag_aug=False, load_video=args.load_video, mode='eval')
+        audio_conf_train = {
+            'num_mel_bins': 128, 
+            'target_length': target_length[args.dataset], 
+            'freqm': 48,
+            'timem': 192,
+            'mixup': args.mixup,
+            'dataset': args.dataset,
+            'mode':'train',
+            'mean':norm_stats[args.dataset][0],
+            'std':norm_stats[args.dataset][1],
+            'noise':False,
+            'multilabel':multilabel_dataset[args.dataset],
+        }
+        audio_conf_val = {
+            'num_mel_bins': 128, 
+            'target_length': target_length[args.dataset], 
+            'freqm': 0,
+            'timem': 0,
+            'mixup': 0,
+            'dataset': args.dataset,
+            'mode':'val',
+            'mean':norm_stats[args.dataset][0],
+            'std':norm_stats[args.dataset][1],
+            'noise':False,
+            'multilabel':multilabel_dataset[args.dataset],
+        }  
+        dataset_train = MultichannelDataset(
+            args.audioset_train, audio_conf=audio_conf_train, 
+            reverb_json=args.reverb_train_json, reverb_type=args.reverb_type, 
+            label_csv=args.label_csv,
+            use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
+            roll_mag_aug=args.roll_mag_aug, mode='train'
+        )
+        
+        dataset_val = MultichannelDataset(
+            args.audioset_eval, audio_conf=audio_conf_val, 
+            reverb_json=args.reverb_val_json, reverb_type=args.reverb_type, 
+            label_csv=args.label_csv,
+            use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
+            roll_mag_aug=False, mode='eval'
+        )
 
-    if True: #args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
+    #args.distributed:
+    num_tasks = misc.get_world_size()
+    global_rank = misc.get_rank()
 
-        num_nodes = int(os.environ.get('num_nodes', 1))
-        ddp = int(os.environ.get('DDP', 1))
-        num_nodes = max(ddp, num_nodes)
-        rank = int(os.environ.get('NODE_RANK', 0))
-        print(f"num_nodes:{num_nodes}, rank:{rank}, ddp:{ddp}, num_tasks:{num_tasks}, global_rank:{global_rank}")
-        # num_nodes:1, rank:0, ddp:1, num_tasks:8, global_rank:0 (sbatch)
-        if args.weight_sampler:
-            samples_weight = np.loadtxt(args.weight_csv, delimiter=',')
-            if args.distributed_wrapper:
-                print('use distributed_wrapper sampler')
-                epoch_len=args.epoch_len #200000 #=> 250000
-                #epoch_len=21000 # AS-20K
-                # replacement should be False
-                sampler_train = DistributedSamplerWrapper(
-                                    sampler=WeightedRandomSampler(samples_weight, num_samples=epoch_len, replacement=args.replacement),
-                                    dataset=range(epoch_len),
-                                    num_replicas=num_tasks, #num_nodes, #num_tasks?
-                                    rank=global_rank, #rank, # global_rank?
-                                    )
-            else:
-                #sampler_train = WeightedRandomSampler(samples_weight, len(samples_weight), replacement=True)
-                sampler_train = DistributedWeightedSampler(dataset_train, samples_weight,  num_replicas=num_tasks, rank=global_rank, replacement=args.replacement)
+    num_nodes = int(os.environ.get('num_nodes', 1))
+    ddp = int(os.environ.get('DDP', 1))
+    num_nodes = max(ddp, num_nodes)
+    rank = int(os.environ.get('NODE_RANK', 0))
+    
+    print(f"num_nodes:{num_nodes}, rank:{rank}, ddp:{ddp}, num_tasks:{num_tasks}, global_rank:{global_rank}")
+    # num_nodes:1, rank:0, ddp:1, num_tasks:8, global_rank:0 (sbatch)
+    if args.weight_sampler:
+        samples_weight = np.loadtxt(args.weight_csv, delimiter=',')
+        if args.distributed_wrapper:
+            print('use distributed_wrapper sampler')
+            epoch_len=args.epoch_len #200000 #=> 250000
+            #epoch_len=21000 # AS-20K
+            # replacement should be False
+            sampler_train = DistributedSamplerWrapper(
+                                sampler=WeightedRandomSampler(samples_weight, num_samples=epoch_len, replacement=args.replacement),
+                                dataset=range(epoch_len),
+                                num_replicas=num_tasks, #num_nodes, #num_tasks?
+                                rank=global_rank, #rank, # global_rank?
+                            )
         else:
-            sampler_train = torch.utils.data.DistributedSampler(
-                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-            )
-
-        print("Sampler_train = %s" % str(sampler_train))
-        if args.dist_eval:
-            if len(dataset_val) % num_tasks != 0:
-                print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
-                      'This will slightly alter validation results as extra duplicate entries are added to achieve '
-                      'equal num of samples per-process.')
-            sampler_val = torch.utils.data.DistributedSampler(
-                dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True)  # shuffle=True to reduce monitor bias
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+            #sampler_train = WeightedRandomSampler(samples_weight, len(samples_weight), replacement=True)
+            sampler_train = DistributedWeightedSampler(dataset_train, samples_weight,  num_replicas=num_tasks, rank=global_rank, replacement=args.replacement)
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_train = torch.utils.data.DistributedSampler(
+            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        )
+
+    print("Sampler_train = %s" % str(sampler_train))
+    if args.dist_eval:
+        if len(dataset_val) % num_tasks != 0:
+            print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
+                    'This will slightly alter validation results as extra duplicate entries are added to achieve '
+                    'equal num of samples per-process.')
+        sampler_val = torch.utils.data.DistributedSampler(
+            dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True)  # shuffle=True to reduce monitor bias
+    else:
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     if global_rank == 0 and args.log_dir is not None and not args.eval:
@@ -339,6 +333,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+        collate_fn=dataset_train.collate_fn,
     )
 
     data_loader_val = torch.utils.data.DataLoader(
@@ -346,7 +341,8 @@ def main(args):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
-        drop_last=False
+        drop_last=False,
+        collate_fn=dataset_val.collate_fn,
     )
 
     mixup_fn = None
@@ -364,26 +360,21 @@ def main(args):
         global_pool=args.global_pool,
         mask_2d=args.mask_2d,
         use_custom_patch=args.use_custom_patch,
-        ## remove video part for A-MAE
-        #load_video=args.load_video,
-        # n_frm=args.n_frm,
-        #split_pos=args.split_pos,
-        #av_fusion=args.av_fusion,
     )
     if args.audio_exp:
-        img_size=(target_length[args.dataset],128) # 1024, 128
-        in_chans=1
+        img_size = (target_length[args.dataset], 128) # 1024, 128
+        in_chans = 4
         emb_dim = 768
-        if args.model == "vit_small_patch16":
-            emb_dim = 384
-        if args.use_custom_patch:
-            model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=16, in_chans=1, embed_dim=emb_dim, stride=10)
-            model.pos_embed = nn.Parameter(torch.zeros(1, 1212 + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
-        else:
-            model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=1, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
-            num_patches = model.patch_embed.num_patches
-            #num_patches = 512 # assume audioset, 1024//16=64, 128//16=8, 512=64x8
-            model.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
+        # if args.model == "vit_small_patch16":
+        #     emb_dim = 384
+        # if args.use_custom_patch:
+        #     model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=16, in_chans=1, embed_dim=emb_dim, stride=10)
+        #     model.pos_embed = nn.Parameter(torch.zeros(1, 1212 + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
+        # else:
+        model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
+        num_patches = model.patch_embed.num_patches
+        #num_patches = 512 # assume audioset, 1024//16=64, 128//16=8, 512=64x8
+        model.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
 
     #if args.finetune and not args.eval:
     if args.finetune:
@@ -397,6 +388,10 @@ def main(args):
                 if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
+        
+        for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias']:
+            checkpoint_model.pop(k)
+        
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
@@ -463,15 +458,6 @@ def main(args):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
         
-        # if args.load_video:
-        #     train_stats = train_one_epoch_av(
-        #         model, criterion, data_loader_train,
-        #         optimizer, device, epoch, loss_scaler,
-        #         args.clip_grad, mixup_fn,
-        #         log_writer=log_writer,
-        #         args=args
-        #     )            
-        # else:
         train_stats = train_one_epoch(
                 model, criterion, data_loader_train,
                 optimizer, device, epoch, loss_scaler,

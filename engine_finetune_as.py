@@ -18,10 +18,9 @@ import torch
 from timm.data import Mixup
 from timm.utils import accuracy
 
-import util.misc as misc
-import util.lr_sched as lr_sched
-from util.stat import calculate_stats, concat_all_gather
-
+import utils.misc as misc
+import utils.lr_sched as lr_sched
+from utils.stat import calculate_stats, concat_all_gather
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -42,18 +41,26 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
 
-    for data_iter_step, (samples, targets, _vids) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (batch) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
-        samples = samples.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        # samples = samples.to(device, non_blocking=True)
+        # targets = targets.to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast():
-            outputs = model(samples, mask_t_prob=args.mask_t_prob, mask_f_prob=args.mask_f_prob)
-            loss = criterion(outputs, targets)
+        waveforms, reverbs = batch[0], batch[1]
+        targets, spaital_targets = batch[2], batch[3]
+
+        targets = targets.to(device, non_blocking=True)
+        distance = spaital_targets['distance'].long().to(device, non_blocking=True)
+        azimuth = spaital_targets['azimuth'].long().to(device, non_blocking=True)
+        elevation = spaital_targets['elevation'].long().to(device, non_blocking=True)
+
+        # with torch.cuda.amp.autocast():
+        outputs = model(waveforms, reverbs, mask_t_prob=args.mask_t_prob, mask_f_prob=args.mask_f_prob)
+        loss = criterion(outputs, targets)
 
         loss_value = loss.item()
 
