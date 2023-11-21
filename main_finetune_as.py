@@ -19,6 +19,7 @@ from timm.models.layers import to_2tuple, trunc_normal_
 
 import models_vit
 from engine_finetune_as import evaluate, train_one_epoch
+
 from data.dataset import DistributedSamplerWrapper, DistributedWeightedSampler, MultichannelDataset
 import utils.lr_decay as lrd
 import utils.misc as misc
@@ -125,7 +126,7 @@ def get_args_parser():
                         help='Perform evaluation only')
     parser.add_argument('--dist_eval', action='store_true', default=False,
                         help='Enabling distributed evaluation (recommended during training for faster monitor')
-    parser.add_argument('--num_workers', default=10, type=int)
+    parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -361,20 +362,6 @@ def main(args):
         mask_2d=args.mask_2d,
         use_custom_patch=args.use_custom_patch,
     )
-    if args.audio_exp:
-        img_size = (target_length[args.dataset], 128) # 1024, 128
-        in_chans = 4
-        emb_dim = 768
-        # if args.model == "vit_small_patch16":
-        #     emb_dim = 384
-        # if args.use_custom_patch:
-        #     model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=16, in_chans=1, embed_dim=emb_dim, stride=10)
-        #     model.pos_embed = nn.Parameter(torch.zeros(1, 1212 + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
-        # else:
-        model.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
-        num_patches = model.patch_embed.num_patches
-        #num_patches = 512 # assume audioset, 1024//16=64, 128//16=8, 512=64x8
-        model.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
 
     #if args.finetune and not args.eval:
     if args.finetune:
@@ -384,21 +371,26 @@ def main(args):
         state_dict = model.state_dict()
 
         if not args.eval:
-            for k in ['head.weight', 'head.bias']:
+            for k in ['head.weight', 'head.bias', 'patch_embed.proj.weight', 'patch_embed.proj.bias']:
                 if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
         
-        for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias']:
-            checkpoint_model.pop(k)
+        # for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias']:
+        #     checkpoint_model.pop(k)
         
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
 
-        # manually initialize fc layer
-        if not args.eval:
-            trunc_normal_(model.head.weight, std=2e-5)
+        # if not initial from official pretrained AudioMAE ckpt, do not norm the head
+        # if not args.eval:
+        #     trunc_normal_(model.head.weight, std=2e-5)
+    
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable param: {name}, {param.shape}, {param.dtype}")
 
     model.to(device)
 
@@ -465,7 +457,7 @@ def main(args):
                 log_writer=log_writer,
                 args=args
             )
-        if args.output_dir:
+        if args.output_dir and epoch % 5 == 0:
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)

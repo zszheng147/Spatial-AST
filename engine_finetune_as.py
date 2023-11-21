@@ -110,32 +110,34 @@ def evaluate(data_loader, model, device, dist_eval=False):
 
     # switch to evaluation mode
     model.eval()
-    outputs=[]
-    targets=[]
-    vids=[]
+    outputs = []
+    targets = []
+    vids = []
     for batch in metric_logger.log_every(data_loader, 300, header):
 
-        images = batch[0]
-        target = batch[1]
-        vid = batch[2]
-        images = images.to(device, non_blocking=True)
+        waveforms, reverbs = batch[0], batch[1]
+        target, spaital_targets = batch[2], batch[3]
+
         target = target.to(device, non_blocking=True)
+        distance = spaital_targets['distance'].long().to(device, non_blocking=True)
+        azimuth = spaital_targets['azimuth'].long().to(device, non_blocking=True)
+        elevation = spaital_targets['elevation'].long().to(device, non_blocking=True)
 
         # compute output
-        with torch.cuda.amp.autocast():
-            output = model(images)
-            # remark: 
-            # 1. use concat_all_gather and --dist_eval for faster eval by distributed load over gpus
-            # 2. otherwise comment concat_all_gather and remove --dist_eval one every gpu
-            if dist_eval:
-                output = concat_all_gather(output)
-                target = concat_all_gather(target)
-            outputs.append(output)
-            targets.append(target)
-            vids.append(vid)
 
-    outputs=torch.cat(outputs).cpu().numpy()
-    targets=torch.cat(targets).cpu().numpy()
+        output = model(waveforms, reverbs)
+        # remark: 
+        # 1. use concat_all_gather and --dist_eval for faster eval by distributed load over gpus
+        # 2. otherwise comment concat_all_gather and remove --dist_eval one every gpu
+        if dist_eval:
+            output = concat_all_gather(output)
+            target = concat_all_gather(target)
+        outputs.append(output)
+        targets.append(target)
+
+
+    outputs = torch.cat(outputs).cpu().numpy()
+    targets = torch.cat(targets).cpu().numpy()
     vids = [j for sub in vids for j in sub]
     np.save('inf_output.npy', {'vids':vids, 'embs_527':outputs, 'targets':targets})
     stats = calculate_stats(outputs, targets)

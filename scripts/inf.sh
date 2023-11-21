@@ -1,41 +1,31 @@
 #!/bin/bash
-#SBATCH --job-name=aud-ft
-#SBATCH --partition=learnfair
-#SBATCH --nodes=1
-#SBATCH --gpus-per-node=8
-#SBATCH --ntasks-per-node=8
-#SBATCH --cpus-per-task=10
-#SBATCH --time=24:00:00
-#SBATCH --mem=480GB
-#SBATCH --signal=USR1@120
-#SBATCH --output=/checkpoint/%u/jobs/%A.out
-#SBATCH --error=/checkpoint/%u/jobs/%A.err
 
-audioset_train_json=/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/train.json
-audioset_train_all_json=/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/train_all.json
-audioset_eval_json=/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/eval_19k.json
-audioset_label=/checkpoint/berniehuang/ast/egs/audioset/data/class_labels_indices.csv
+
 dataset=audioset
+# ckpt=/mnt/lustre/sjtu/home/zsz01/models/audiomae/pretrained.pth
+ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-2m-lr1e3/checkpoint-45-final.pth
 
-if [ -z "$1" ]
-then
-    ckpt='/checkpoint/berniehuang/experiments/419909/checkpoint-99.pth'
-else
-    ckpt=$1
-fi
+audioset_label=/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv
+audioset_train_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/unbalanced_no_missing.json
+audioset_train_weight=/mnt/lustre/sjtu/home/zsz01/data/audioset/distributed/unbalanced.csv
+audioset_eval_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/eval_no_missing.json
 
+reverb_type=BINAURAL
+reverb_train_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/train_reverberation.json
+reverb_val_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/eval_reverberation.json
 
-CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=1 main_finetune_as.py \
---log_dir /checkpoint/berniehuang/mae/as_exp/$SLURM_JOB_ID \
---output_dir /checkpoint/berniehuang/mae/as_exp/$SLURM_JOB_ID \
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch --nproc_per_node=4 --use_env main_finetune_as.py \
+--log_dir /mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/eval \
+--output_dir /mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/eval \
 --model vit_base_patch16 \
 --dataset $dataset \
---data_train $audioset_train_json \
---data_eval $audioset_eval_json \
+--audioset_train $audioset_train_json \
+--audioset_eval $audioset_eval_json \
 --label_csv $audioset_label \
+--reverb_train $reverb_train_json \
+--reverb_val $reverb_val_json \
+--reverb_type $reverb_type \
 --finetune $ckpt \
---batch_size 16 \
+--batch_size 128 \
 --eval \
-
-
-
+--dist_eval \

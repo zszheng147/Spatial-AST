@@ -1,3 +1,5 @@
 outputs/
 __pycache__/
 *.pth
+*.npy
+*.txt

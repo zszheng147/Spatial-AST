@@ -33,7 +33,7 @@ class MaskedAutoencoderViT(nn.Module):
                  use_custom_patch=False, split_pos=False, pos_trainable=False, use_nce=False, beta=4.0, decoder_mode=0,
                  mask_t_prob=0.6, mask_f_prob=0.5, mask_2d=False,
                  epoch=0, no_shift=False,
-                 ):
+                ):
         super().__init__()
 
         self.audio_exp=audio_exp

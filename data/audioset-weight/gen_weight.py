@@ -16,15 +16,15 @@ def make_index_dict(label_csv):
             line_count += 1
     return index_lookup
 
-def gen_weight(josn_file, label_file, output_file):
+def gen_weight(json_file, label_file, output_file):
     index_dict = make_index_dict(label_file)
     label_count = np.zeros(527)
 
-    with open(josn_file, 'r', encoding='utf8')as fp:
-        data = json.load(fp)['data']
+    with open(json_file, 'r', encoding='utf8')as fp:
+        data = json.load(fp)
 
     for sample in data:
-        sample_labels = sample['labels'].split(',')
+        sample_labels = sample['label']
         for label in sample_labels:
             label_idx = int(index_dict[label])
             label_count[label_idx] = label_count[label_idx] + 1
@@ -34,7 +34,7 @@ def gen_weight(josn_file, label_file, output_file):
 
     sample_weight = np.zeros(len(data))
     for i, sample in enumerate(data):
-        sample_labels = sample['labels'].split(',')
+        sample_labels = sample['label']
         for label in sample_labels:
             label_idx = int(index_dict[label])
             # summing up the weight of all appeared classes in the sample, note audioset is multiple-label classification
@@ -45,9 +45,9 @@ def gen_weight(josn_file, label_file, output_file):
 
 if __name__ == '__main__':
     #args = parser.parse_args()
-    json_file='/checkpoint/berniehuang/ast/egs/audioset/data/datafiles/train_all.json'
-    label_file='/checkpoint/berniehuang/ast/egs/audioset/data/class_labels_indices.csv'
+    json_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/unbalanced_no_missing.json'
+    label_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv'
     output_file='./weight_train_all.csv'
-    gen_weight(json_file,label_file,output_file)
+    gen_weight(json_file, label_file, output_file)
 
 

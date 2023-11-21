@@ -5,6 +5,7 @@ import os
 import random
 import sys
 
+import h5py
 import numpy as np
 import soundfile as sf
 from scipy import signal
@@ -15,8 +16,6 @@ import torch.nn.functional
 import torchaudio
 from torch.utils.data import Dataset, Sampler
 from torch.utils.data import DistributedSampler, WeightedRandomSampler
-
-from .kaldi import spectrum_fbank
 
 class DistributedSamplerWrapper(DistributedSampler):
     def __init__(
@@ -127,9 +126,9 @@ def lookup_list(index_list, label_csv):
 
 class MultichannelDataset(Dataset):
     _ext_reverb = ".npy"
-    _ext_audio = ".flac"
-    audio_path_root = "/saltpool0/data/AudioSet/audio"
-    reverb_path_root = "/home/zhisheng/data/SpatialSound/reverberation/mp3d"
+    _ext_audio = ".wav"
+    audio_path_root = "/mnt/lustre/sjtu/shared/data/raa/AudioSet"
+    reverb_path_root = "/data/shared/zsz01/reverb/"
 
     def __init__(
             self, 
@@ -185,87 +184,6 @@ class MultichannelDataset(Dataset):
         mag = np.random.beta(10, 10) + 0.5
         return torch.roll(waveform, idx) * mag
 
-    # def _wav2fbank(self, audio_path, reverb_path, audio_path2=None, reverb_path2=None):
-    #     assert reverb_path != None
-
-    #     if audio_path2 == None:
-    #         waveform, sr = sf.read(audio_path)
-    #         if len(waveform.shape) > 1:
-    #             waveform = waveform[:, 0]
-    #         if sr != 48000:
-    #             waveform = signal.resample_poly(waveform, 48000, sr)
-    #         waveform = waveform.reshape(1, -1)
-    #         reverb = np.load(reverb_path)
-    #         conv_wave = signal.fftconvolve(waveform, reverb, mode='full')
-    #         waveform = signal.resample_poly(conv_wave.T, 16000, 48000).T
-
-    #         waveform = torch.from_numpy(waveform).float()
-    #         waveform = waveform - waveform.mean()
-    #         if self.roll_mag_aug:
-    #             waveform = self._roll_mag_aug(waveform)
-    #     # mixup
-    #     else:
-    #         # TODO
-    #         waveform1, sr = torchaudio.load(filename)
-    #         waveform2, _ = torchaudio.load(filename2)
-
-    #         waveform1 = waveform1 - waveform1.mean()
-    #         waveform2 = waveform2 - waveform2.mean()
-
-    #         if self.roll_mag_aug:
-    #             waveform1 = self._roll_mag_aug(waveform1)
-    #             waveform2 = self._roll_mag_aug(waveform2)
-
-    #         if waveform1.shape[1] != waveform2.shape[1]:
-    #             if waveform1.shape[1] > waveform2.shape[1]:
-    #                 # padding
-    #                 temp_wav = torch.zeros(1, waveform1.shape[1])
-    #                 temp_wav[0, 0:waveform2.shape[1]] = waveform2
-    #                 waveform2 = temp_wav
-    #             else:
-    #                 # cutting
-    #                 waveform2 = waveform2[0, 0:waveform1.shape[1]]
-
-    #         # sample lambda from beta distribtion
-    #         mix_lambda = np.random.beta(10, 10)
-
-    #         mix_waveform = mix_lambda * waveform1 + (1 - mix_lambda) * waveform2
-    #         waveform = mix_waveform - mix_waveform.mean()
-    #     # 498 128, 998, 128
-        
-    #     mag_phases = torch.empty((self.channel_num * 2, audio_frame_length, 257))
-    #     fbanks = torch.empty((self.channel_num, audio_frame_length, 128))
-    #     for chans in range(waveform.shape[0]):
-    #         wav = waveform[chans, :].unsqueeze(0)
-            
-    #         spectrum, fbank = spectrum_fbank( # 25ms and 10ms
-    #             wav, htk_compat=True, sample_frequency=16000, use_energy=False,
-    #             window_type='hanning', num_mel_bins=128, dither=0.0, frame_shift=10
-    #         )
-    #         target_length = audio_frame_length
-    #         assert fbank.shape[0] == spectrum.shape[0]
-    #         n_frames = fbank.shape[0]
-
-    #         p = target_length - n_frames
-    #         if p > 0:
-    #             m = torch.nn.ZeroPad2d((0, 0, 0, p))
-    #             fbank = m(fbank)
-    #             spectrum = m(spectrum)
-    #         elif p < 0:
-    #             fbank = fbank[0:target_length, :]
-    #             spectrum = spectrum[0:target_length, :]
-            
-    #         mag_phases[chans, :, :] = spectrum.abs()
-    #         mag_phases[channel_num + chans, :, :] = spectrum.angle()
-
-    #         fbank = (fbank - self.norm_mean) / (self.norm_std * 2)
-    #         fbanks[chans] = fbank
-
-    #     if audio_path2 == None:
-    #         return fbank, 0
-    #     else:
-    #         return fbank, mix_lambda
-        
     def _spatial_targets_discretize(self, reverb_item):
         distance = reverb_item['distance'] # meter: [0, 1, 2, 3, ..., 10]
         direction = reverb_item['direction']
@@ -294,26 +212,79 @@ class MultichannelDataset(Dataset):
         """
         # do mix-up for this sample (controlled by the given mixup rate)
         if random.random() < self.mixup: # for audio_exp, when using mixup, assume multilabel
+            reverb_item = random.choice(self.reverb)
+            spaital_targets = self._spatial_targets_discretize(reverb_item)
+
+            house_id, prefix  = reverb_item['reverberation'].split('-', maxsplit=1)
+            reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, house_id, prefix + self._ext_reverb)
+            reverb = torch.from_numpy(np.load(reverb_path)).float()
+            reverb_padding = 32000 * 2 - reverb.shape[1]
+            if reverb_padding > 0:
+                reverb = torch.nn.functional.pad(reverb, (0, reverb_padding), 'constant', 0)
+            elif reverb_padding < 0:
+                reverb = reverb[:, :32000 * 2]
+
             datum = self.data[index]
-            # find another sample to mix, also do balance sampling
-            # sample the other sample from the multinomial distribution, will make the performance worse
-            # mix_sample_idx = np.random.choice(len(self.data), p=self.sample_weight_file)
-            # sample the other sample from the uniform distribution
+
             mix_sample_idx = random.randint(0, len(self.data)-1)
             mix_datum = self.data[mix_sample_idx]
+            
+            audio_path = os.path.join(self.audio_path_root, datum['folder'], datum['id'] + self._ext_audio)
+            mix_audio_path = os.path.join(self.audio_path_root, mix_datum['folder'], mix_datum['id'] + self._ext_audio)
+            if 'unbalanced' in audio_path:
+                h5_path, fname = audio_path.rsplit('/', 1)
+                waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                sr = 32000
+            else:
+                waveform, sr = sf.read(audio_path)
+            if len(waveform.shape) > 1: 
+                waveform = waveform[:, 0]  
+            if sr != 32000:
+                waveform = signal.resample_poly(waveform, 32000, sr)
 
-            fbank, mix_lambda = self._wav2fbank(datum['id'], mix_datum['id'])
+            if 'unbalanced' in mix_audio_path:
+                h5_path, fname = mix_audio_path.rsplit('/', 1)
+                mix_waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                sr = 32000
+            else:
+                mix_waveform, sr = sf.read(mix_audio_path)
+            if len(mix_waveform.shape) > 1: 
+                mix_waveform = mix_waveform[:, 0]  
+            if sr != 32000:
+                mix_waveform = signal.resample_poly(mix_waveform, 32000, sr)
+       
+            waveform = torch.from_numpy(waveform).reshape(1, -1).float()
+            mix_waveform = torch.from_numpy(mix_waveform).reshape(1, -1).float()
+
+            if self.roll_mag_aug:
+                waveform = self._roll_mag_aug(waveform)
+                mix_waveform = self._roll_mag_aug(mix_waveform)
+
+            padding = 32000 * 10 - waveform.shape[1]
+            if padding > 0:
+                waveform = torch.nn.functional.pad(waveform, (0, padding), 'constant', 0)
+            elif padding < 0:
+                waveform = waveform[:, :32000 * 10]
+
+            mix_padding = 32000 * 10 - mix_waveform.shape[1]
+            if mix_padding > 0:
+                mix_waveform = torch.nn.functional.pad(mix_waveform, (0, mix_padding), 'constant', 0)
+            elif mix_padding < 0:
+                mix_waveform = mix_waveform[:, :32000 * 10]
+            
+            mix_lambda = np.random.beta(10, 10)
+            waveform = mix_lambda * waveform + (1 - mix_lambda) * mix_waveform
 
             # initialize the label
             label_indices = np.zeros(self.label_num)
             # add sample 1 labels
-            for label_str in datum['labels'].split(','):
+            for label_str in datum['label']:
                 label_indices[int(self.index_dict[label_str])] += mix_lambda
             # add sample 2 labels
-            for label_str in mix_datum['labels'].split(','):
-                label_indices[int(self.index_dict[label_str])] += 1.0-mix_lambda
+            for label_str in mix_datum['label']:
+                label_indices[int(self.index_dict[label_str])] += 1.0 - mix_lambda
             label_indices = torch.FloatTensor(label_indices)
-        # if not do mixup
+        
         else:
             datum = self.data[index]
             reverb_item = random.choice(self.reverb)
@@ -331,7 +302,12 @@ class MultichannelDataset(Dataset):
             elif reverb_padding < 0:
                 reverb = reverb[:, :32000 * 2]
 
-            waveform, sr = sf.read(audio_path)
+            if 'unbalanced' in audio_path:
+                h5_path, fname = audio_path.rsplit('/', 1)
+                waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                sr = 32000
+            else:
+                waveform, sr = sf.read(audio_path)
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]   
            
@@ -354,22 +330,6 @@ class MultichannelDataset(Dataset):
 
             spaital_targets = self._spatial_targets_discretize(reverb_item)
 
-        # SpecAug for training (not for eval)
-        # freqm = torchaudio.transforms.FrequencyMasking(self.freqm)
-        # timem = torchaudio.transforms.TimeMasking(self.timem)
-
-        # fbank = fbank.transpose(0,1).unsqueeze(0) # 1, 128, 1024 (...,freq,time)
-        # if self.freqm != 0:
-        #     fbank = freqm(fbank)
-        # if self.timem != 0:
-        #     fbank = timem(fbank) # (..., freq, time)
-        # fbank = torch.transpose(fbank.squeeze(), 0, 1) # time, freq
-
-        
-        # if self.noise == True: # default is false, true for spc
-        #     fbank = fbank + torch.rand(fbank.shape[0], fbank.shape[1]) * np.random.rand() / 10
-        #     fbank = torch.roll(fbank, np.random.randint(-10, 10), 0)
-        # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
         return waveform, reverb, label_indices, spaital_targets, audio_path, reverb_path
 
     def __len__(self):

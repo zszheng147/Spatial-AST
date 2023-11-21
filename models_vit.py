@@ -8,7 +8,7 @@
 # timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
 # DeiT: https://github.com/facebookresearch/deit
 # --------------------------------------------------------
-
+import numba
 from functools import partial
 
 import numpy as np
@@ -17,11 +17,41 @@ import torch
 import torch.nn as nn
 import torchaudio
 
-import timm.models.vision_transformer
-from timm.models.vision_transformer import PatchEmbed, Block
+from torchlibrosa.stft import STFT, LogmelFilterBank
+from torchlibrosa.augmentation import SpecAugmentation
 
-from utils.patch_embed import PatchEmbed_new, PatchEmbed3D_new
-from utils.stft import STFT, LogmelFilterBank
+import timm.models.vision_transformer
+from timm.models.layers import to_2tuple
+
+class PatchEmbed_new(nn.Module):
+    """ Flexible Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, stride=10):
+        super().__init__()
+        img_size = to_2tuple(img_size)
+        patch_size = to_2tuple(patch_size)
+        stride = to_2tuple(stride)
+        
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.in_chans = in_chans
+
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) # with overlapped patches
+        _, _, h, w = self.get_output_shape(img_size) # n, emb_dim, h, w
+        self.patch_hw = (h, w)
+        self.num_patches = h*w
+
+    def get_output_shape(self, img_size):
+        return self.proj(torch.randn(1, self.in_chans, img_size[0], img_size[1])).shape 
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+
+        x = self.proj(x) # 32, 1, 1024, 128 -> 32, 768, 101, 12
+        x = x.flatten(2) # 32, 768, 101, 12 -> 32, 768, 1212
+        x = x.transpose(1, 2) # 32, 768, 1212 -> 32, 1212, 768
+        return x
+
 
 class PhaseSpectrogramReducer(nn.Module):
     def __init__(self, n_bins, n_mels):
@@ -40,6 +70,15 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
     """
     def __init__(self, global_pool=False, mask_2d=True, use_custom_patch=False, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
+        img_size = (1024, 128) # 1024, 128
+        in_chans = 4
+        emb_dim = 768
+
+        self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
+        num_patches = self.patch_embed.num_patches
+        #num_patches = 512 # assume audioset, 1024//16=64, 128//16=8, 512=64x8
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
+
         self.spectrogram_extractor = STFT(
             n_fft=1024, hop_length=320, win_length=1024, window='hann', 
             center=True, pad_mode='reflect', freeze_parameters=True
@@ -50,6 +89,10 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
             fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
         )
         self.phase_extractor = PhaseSpectrogramReducer(*self.logmel_extractor.melW.shape)
+        self.spec_augmenter = SpecAugmentation(time_drop_width=64, time_stripes_num=2, 
+                                    freq_drop_width=8, freq_stripes_num=2) # 2 2
+        
+        self.input_norm = nn.BatchNorm2d(128)
 
         self.global_pool = global_pool
         if self.global_pool:
@@ -197,11 +240,12 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
         return outcome
 
-
-
     # overwrite original timm
     def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
-        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        if self.training:
+            waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        else:
+            waveforms = waveforms.repeat(1, 2, 1)
         B, C, T = waveforms.shape
 
         waveforms = waveforms.reshape(B * C, T)
@@ -214,6 +258,19 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         x = torch.cat([logmel_features, phase_features], dim=1)
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
+        
+        if self.training:
+            x = self.spec_augmenter(x)
+
+        x = x.transpose(1, 3)
+        x = self.input_norm(x)
+        x = x.transpose(1, 3)
+        
+        if self.training:
+            noise = torch.randn(x.size(), device=x.device)
+            noise_probability = 0.25
+            mask = torch.rand(B, device=x.device) < noise_probability
+            x[mask] += noise[mask]
 
         if mask_t_prob > 0.0 or mask_f_prob > 0.0:
             x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
@@ -221,7 +278,6 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
             x = self.forward_features(x)
         x = self.head(x)
         return x
-
 
 
 def vit_small_patch16(**kwargs):
