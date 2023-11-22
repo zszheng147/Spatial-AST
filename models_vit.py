@@ -242,10 +242,7 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
-        if self.training:
-            waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
-        else:
-            waveforms = waveforms.repeat(1, 2, 1)
+        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
         B, C, T = waveforms.shape
 
         waveforms = waveforms.reshape(B * C, T)

@@ -1,8 +1,8 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-blr=2e-4
+blr=1e-4
 mask_t_prob=0.2
 mask_f_prob=0.2
 
@@ -51,4 +51,3 @@ python -m torch.distributed.launch \
     --distributed_wrapper \
     --mask_2d \
     --num_workers 4 \
-    --epoch_len 10000 \
