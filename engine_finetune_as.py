@@ -61,9 +61,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # with torch.cuda.amp.autocast():
         outputs = model(waveforms, reverbs, mask_t_prob=0, mask_f_prob=0)
-        loss = criterion(outputs[0], targets) + \
-                1.0 * F.cross_entropy(outputs[1], distance) + \
-                F.cross_entropy(outputs[2], azimuth) + F.cross_entropy(outputs[3], elevation)
+        loss = 2 * criterion(outputs[0], targets) + \
+                F.cross_entropy(outputs[2], azimuth) + F.cross_entropy(outputs[3], elevation) + \
+                0.5 * F.cross_entropy(outputs[1], distance)
         
         loss_value = loss.item()
 

@@ -339,7 +339,7 @@ def main(args):
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
-        batch_size=args.batch_size,
+        batch_size=16,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False,
@@ -375,12 +375,21 @@ def main(args):
                 if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
-        
+
+            blocks2_ckpt = {}
+            block_names = ['blocks.0.', 'blocks.1.', 'blocks.2.', 'blocks.3.', 'blocks.4.', 'blocks.5.']
+            for key in list(checkpoint_model.keys()):
+                if any([key.startswith(i) for i in block_names]):
+                    print(key)
+                    blocks2_ckpt[key.replace('blocks.', '')] = checkpoint_model[key]
+
+
         # for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias']:
         #     checkpoint_model.pop(k)
         
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
+        model.blocks2.load_state_dict(blocks2_ckpt, strict=True)
         print(msg)
 
         # if not initial from official pretrained AudioMAE ckpt, do not norm the head
@@ -392,14 +401,9 @@ def main(args):
     
 
     for name, param in model.named_parameters():
-        if 'gate' in name or 'adaption' in name:
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
-
         if param.requires_grad:
             print(f"Trainable param: {name}, {param.shape}, {param.dtype}")
-
+    print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
     model.to(device)
 
     model_without_ddp = model
@@ -420,7 +424,7 @@ def main(args):
     print("effective batch size: %d" % eff_batch_size)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
     # build optimizer with layer-wise lr decay (lrd)

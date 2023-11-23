@@ -71,9 +71,9 @@ class VisionTransformer(VisionTransformer):
         del self.norm  # remove the original norm
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
+        
         self.target_frame = 1024
         
-        self.adaption = nn.Embedding(num_patches + 1, emb_dim)
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
@@ -87,18 +87,27 @@ class VisionTransformer(VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)
         x = self.pos_drop(x)
 
-        adapter = self.adaption.weight.unsqueeze(0).repeat(B, 1, 1)
+        x2 = x
+        # apply Transformer blocks
         for blk in self.blocks:
-            x = blk(x, adapter=adapter)
+            x = blk(x)
+
+        for blk2 in self.blocks2:
+            x2 = blk2(x2)
 
         if self.global_pool:
             x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
+            x2 = x2[:, 1:, :].mean(dim=1)  # global pool without cls token
             outcome = self.fc_norm(x)
+            outcome2 = self.fc_norm(x2)
         else:
             x = self.norm(x)
+            x2 = self.norm(x2)
             outcome = x[:, 0]
+            outcome2 = x2[:, 0]
 
-        return outcome
+        return outcome, outcome2
+
 
     def random_masking(self, x, mask_ratio):
         """
@@ -189,19 +198,27 @@ class VisionTransformer(VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)        
         x = self.pos_drop(x)
 
+        x2 = x
         # apply Transformer blocks
-        adapter = self.adaption.weight.unsqueeze(0).repeat(B, 1, 1)
         for blk in self.blocks:
-            x = blk(x, adapter=adapter)
+            x = blk(x)
+
+        for blk2 in self.blocks2:
+            x2 = blk2(x2)
 
         if self.global_pool:
             x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
+            x2 = x2[:, 1:, :].mean(dim=1)  # global pool without cls token
             outcome = self.fc_norm(x)
+            outcome2 = self.fc_norm(x2)
         else:
             x = self.norm(x)
+            x2 = self.norm(x2)
             outcome = x[:, 0]
+            outcome2 = x2[:, 0]
 
-        return outcome
+        return outcome, outcome2
+
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
@@ -240,14 +257,14 @@ class VisionTransformer(VisionTransformer):
             x[mask] += noise[mask]
 
         if mask_t_prob > 0.0 or mask_f_prob > 0.0:
-            x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
+            x, x2 = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
         else:
-            x = self.forward_features(x)
+            x, x2 = self.forward_features(x)
         
         classify = self.head(x)
-        distance = self.distance_head(x)
-        azimuth = self.azimuth_head(x)
-        elevation = self.elevation_head(x)
+        distance = self.distance_head(x2)
+        azimuth = self.azimuth_head(x2)
+        elevation = self.elevation_head(x2)
         return classify, distance, azimuth, elevation
 
 
@@ -259,7 +276,7 @@ def vit_small_patch16(**kwargs):
 
 def vit_base_patch16(**kwargs):
     model = VisionTransformer(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        patch_size=16, embed_dim=768, depth=6, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
