@@ -384,11 +384,19 @@ def main(args):
         print(msg)
 
         # if not initial from official pretrained AudioMAE ckpt, do not norm the head
-        # if not args.eval:
+        if not args.eval:
+            trunc_normal_(model.distance_head.weight, std=2e-5)
+            trunc_normal_(model.azimuth_head.weight, std=2e-5)
+            trunc_normal_(model.elevation_head.weight, std=2e-5)
         #     trunc_normal_(model.head.weight, std=2e-5)
     
 
     for name, param in model.named_parameters():
+        if 'gate' in name or 'adaption' in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
         if param.requires_grad:
             print(f"Trainable param: {name}, {param.shape}, {param.dtype}")
 
@@ -436,11 +444,16 @@ def main(args):
 
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device, args.dist_eval)
-        with open('aps.txt', 'w') as fp:
-            aps=test_stats['AP']
-            aps=[str(ap) for ap in aps]
-            fp.write('\n'.join(aps))
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['mAP']:.4f}")
+        print(f"distance accuracy: {test_stats['distance_accuracy'] * 100:.2f}")
+        print(f"doa error (20 degree): {test_stats['doa_error'] * 100:.2f}")
+        print(f"doa angular error: {test_stats['doa_angular_error']:.2f}")
+
+        # with open('aps.txt', 'w') as fp:
+        #     aps=test_stats['AP']
+        #     aps=[str(ap) for ap in aps]
+        #     fp.write('\n'.join(aps))
+        # print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['mAP']:.4f}")
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
@@ -466,6 +479,10 @@ def main(args):
             print(f"mAP of the network on the {len(dataset_val)} test images: {test_stats['mAP']:.4f}")
             max_mAP = max(max_mAP, test_stats["mAP"])
             print(f'Max mAP: {max_mAP:.4f}')
+            print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['mAP']:.4f}")
+            print(f"distance accuracy: {test_stats['distance_accuracy'] * 100:.2f}")
+            print(f"doa error (20 degree): {test_stats['doa_error'] * 100:.2f}")
+            print(f"doa angular error: {test_stats['doa_angular_error']:.2f}")
         else:
             test_stats ={'mAP': 0.0}
             print(f'too new to evaluate!')

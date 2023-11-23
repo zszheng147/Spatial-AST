@@ -191,8 +191,10 @@ class MultichannelDataset(Dataset):
         elevation = reverb_item['elevation_degrees'] # (-90, 90) = [-89~89]
 
         distance = distance # 11 classes
-        azimuth = (round(azimuth / 5.0) * 5 + 180) / 5.0 % 72
-        elevation = (round(elevation / 5.0) * 5 + 90) / 5.0 % 36
+        azimuth = azimuth + 180
+        elevation = elevation + 90
+        # azimuth = (round(azimuth / 5.0) * 5 + 180) / 5.0 % 72
+        # elevation = (round(elevation / 5.0) * 5 + 90) / 5.0 % 36
 
         spaital_targets = { 
             "distance": distance,         
@@ -201,7 +203,6 @@ class MultichannelDataset(Dataset):
             "elevation": elevation        
         }   
         return spaital_targets
-
 
     def __getitem__(self, index):
         """

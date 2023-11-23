@@ -20,38 +20,7 @@ import torchaudio
 from torchlibrosa.stft import STFT, LogmelFilterBank
 from torchlibrosa.augmentation import SpecAugmentation
 
-import timm.models.vision_transformer
-from timm.models.layers import to_2tuple
-
-class PatchEmbed_new(nn.Module):
-    """ Flexible Image to Patch Embedding
-    """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, stride=10):
-        super().__init__()
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-        stride = to_2tuple(stride)
-        
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.in_chans = in_chans
-
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) # with overlapped patches
-        _, _, h, w = self.get_output_shape(img_size) # n, emb_dim, h, w
-        self.patch_hw = (h, w)
-        self.num_patches = h*w
-
-    def get_output_shape(self, img_size):
-        return self.proj(torch.randn(1, self.in_chans, img_size[0], img_size[1])).shape 
-
-    def forward(self, x):
-        B, C, H, W = x.shape
-
-        x = self.proj(x) # 32, 1, 1024, 128 -> 32, 768, 101, 12
-        x = x.flatten(2) # 32, 768, 101, 12 -> 32, 768, 1212
-        x = x.transpose(1, 2) # 32, 768, 1212 -> 32, 1212, 768
-        return x
-
+from vision_transformer import VisionTransformer, PatchEmbed_new
 
 class PhaseSpectrogramReducer(nn.Module):
     def __init__(self, n_bins, n_mels):
@@ -65,11 +34,11 @@ class PhaseSpectrogramReducer(nn.Module):
         return reduced_phase
 
 
-class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
+class VisionTransformer(VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
     def __init__(self, global_pool=False, mask_2d=True, use_custom_patch=False, **kwargs):
-        super(VisionTransformer, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 4
         emb_dim = 768
@@ -103,7 +72,11 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
-
+        
+        self.adaption = nn.Embedding(num_patches + 1, emb_dim)
+        self.distance_head = nn.Linear(emb_dim, 11)
+        self.azimuth_head = nn.Linear(emb_dim, 360)
+        self.elevation_head = nn.Linear(emb_dim, 180)
 
     def forward_features(self, x):
         B = x.shape[0]
@@ -112,10 +85,11 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
-        x = self.pos_drop(x)        
+        x = self.pos_drop(x)
 
+        adapter = self.adaption.weight.unsqueeze(0).repeat(B, 1, 1)
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x, adapter=adapter)
 
         if self.global_pool:
             x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
@@ -166,22 +140,10 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
             # # for AS
             T=101 #64,101
             F=12 #8,12
-            # # for ESC
-            # T=50
-            # F=12 
-            # for SPC
-            # T=12
-            # F=12
         else:
             # ## for AS 
             T=64
             F=8
-            # ## for ESC
-            #T=32
-            #F=8            
-            ## for SPC
-            # T=8
-            # F=8
         
         # mask T
         x = x.reshape(N, T, F, D)
@@ -228,8 +190,9 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         x = self.pos_drop(x)
 
         # apply Transformer blocks
+        adapter = self.adaption.weight.unsqueeze(0).repeat(B, 1, 1)
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x, adapter=adapter)
 
         if self.global_pool:
             x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
@@ -242,9 +205,16 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
-        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
-        B, C, T = waveforms.shape
-
+        B, C = reverbs.shape[:2]
+        T = waveforms.shape[-1]
+        
+        if self.training:
+            noise = torch.randn(waveforms.size(), device=waveforms.device)
+            noise_probability = 0.4
+            mask = torch.rand(B, device=waveforms.device) < noise_probability
+            waveforms[mask] += noise[mask]
+        
+        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :T]
         waveforms = waveforms.reshape(B * C, T)
     
         real, imag = self.spectrogram_extractor(waveforms) 
@@ -273,8 +243,12 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
             x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
         else:
             x = self.forward_features(x)
-        x = self.head(x)
-        return x
+        
+        classify = self.head(x)
+        distance = self.distance_head(x)
+        azimuth = self.azimuth_head(x)
+        elevation = self.elevation_head(x)
+        return classify, distance, azimuth, elevation
 
 
 def vit_small_patch16(**kwargs):
