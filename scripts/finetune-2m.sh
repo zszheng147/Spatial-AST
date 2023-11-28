@@ -20,8 +20,8 @@ reverb_type=BINAURAL
 reverb_train_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/train_reverberation.json
 reverb_val_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/eval_reverberation.json
 
-output_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial-gate/outputs/finetune-2m
-log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial-gate/outputs/finetune-2m
+output_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m
+log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
