@@ -24,11 +24,14 @@ import utils.lr_sched as lr_sched
 from utils.stat import calculate_stats, concat_all_gather
 
 
-def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
-                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
-                    mixup_fn: Optional[Mixup] = None, log_writer=None,
-                    args=None):
+def train_one_epoch(
+        model: torch.nn.Module, criterion: torch.nn.Module,
+        mtl_loss_fn: torch.nn.Module,
+        data_loader: Iterable, optimizer: torch.optim.Optimizer,
+        device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
+        mixup_fn: Optional[Mixup] = None, log_writer=None,
+        args=None
+    ):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -60,11 +63,15 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         elevation = spaital_targets['elevation'].long().to(device, non_blocking=True)
 
         # with torch.cuda.amp.autocast():
-        outputs = model(waveforms, reverbs, mask_t_prob=0, mask_f_prob=0)
-        loss = 2 * criterion(outputs[0], targets) + \
-                F.cross_entropy(outputs[2], azimuth) + F.cross_entropy(outputs[3], elevation) + \
-                0.5 * F.cross_entropy(outputs[1], distance)
-        
+        outputs = model(waveforms, reverbs, mask_t_prob=args.mask_t_prob, mask_f_prob=args.mask_f_prob)
+
+        loss = mtl_loss_fn([
+                criterion(outputs[0], targets), 
+                F.cross_entropy(outputs[1], distance),
+                F.cross_entropy(outputs[2], azimuth), 
+                F.cross_entropy(outputs[3], elevation)
+            ]
+        )
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -104,8 +111,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 def evaluate(data_loader, model, device, dist_eval=False):
-    criterion = torch.nn.BCEWithLogitsLoss()
-
     metric_logger = misc.MetricLogger(delimiter="  ")
     header = 'Test:'
 
@@ -131,7 +136,7 @@ def evaluate(data_loader, model, device, dist_eval=False):
         # 1. use concat_all_gather and --dist_eval for faster eval by distributed load over gpus
         # 2. otherwise comment concat_all_gather and remove --dist_eval one every gpu
         if dist_eval:
-            cls_output = concat_all_gather(output[0])
+            cls_output = concat_all_gather(output[0].detach())
             target = concat_all_gather(target)
         outputs.append(cls_output)
         targets.append(target)

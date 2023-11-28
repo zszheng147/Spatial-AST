@@ -376,33 +376,23 @@ def main(args):
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
 
-            blocks2_ckpt = {}
-            block_names = ['blocks.0.', 'blocks.1.', 'blocks.2.', 'blocks.3.', 'blocks.4.', 'blocks.5.']
-            for key in list(checkpoint_model.keys()):
-                if any([key.startswith(i) for i in block_names]):
-                    print(key)
-                    blocks2_ckpt[key.replace('blocks.', '')] = checkpoint_model[key]
+        if 'shared_blocks.0.mlp.fc1.weight' not in checkpoint_model:
+            for k in list(checkpoint_model.keys()):
+                if k.startswith('blocks'):
+                    new_k = k.replace('blocks', 'shared_blocks')
+                    checkpoint_model[new_k] = checkpoint_model[k]
+                    del checkpoint_model[k]
 
-
-        # for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias']:
-        #     checkpoint_model.pop(k)
-        
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
-        model.blocks2.load_state_dict(blocks2_ckpt, strict=True)
         print(msg)
 
-        # if not initial from official pretrained AudioMAE ckpt, do not norm the head
         if not args.eval:
+            trunc_normal_(model.head.weight, std=2e-5)
             trunc_normal_(model.distance_head.weight, std=2e-5)
             trunc_normal_(model.azimuth_head.weight, std=2e-5)
             trunc_normal_(model.elevation_head.weight, std=2e-5)
-        #     trunc_normal_(model.head.weight, std=2e-5)
     
-
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Trainable param: {name}, {param.shape}, {param.dtype}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
     model.to(device)
 
@@ -427,8 +417,10 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
+    loss_fn = models_vit.AutomaticWeightedLoss(4).to(device)
     # build optimizer with layer-wise lr decay (lrd)
-    param_groups = lrd.param_groups_lrd(model_without_ddp, args.weight_decay,
+    param_groups = lrd.param_groups_lrd(
+        model_without_ddp, loss_fn, args.weight_decay,
         no_weight_decay_list=model_without_ddp.no_weight_decay(),
         layer_decay=args.layer_decay
     )
@@ -441,7 +433,6 @@ def main(args):
     else:
         criterion = nn.BCEWithLogitsLoss() # works better
     
-
     print("criterion = %s" % str(criterion))
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
@@ -468,7 +459,7 @@ def main(args):
             data_loader_train.sampler.set_epoch(epoch)
         
         train_stats = train_one_epoch(
-                model, criterion, data_loader_train,
+                model, criterion, loss_fn, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
                 args.clip_grad, mixup_fn,
                 log_writer=log_writer,
@@ -494,10 +485,12 @@ def main(args):
         if log_writer is not None:
             log_writer.add_scalar('perf/mAP', test_stats['mAP'], epoch)
 
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                        **{f'test_{k}': v for k, v in test_stats.items()},
-                        'epoch': epoch,
-                        'n_parameters': n_parameters}
+        log_stats = {
+            'epoch': epoch,
+            'n_parameters': n_parameters,
+            **{f'train_{k}': v for k, v in train_stats.items()},
+            **{f'test_{k}': v for k, v in test_stats.items()},
+        }
 
         if args.output_dir and misc.is_main_process():
             if log_writer is not None:

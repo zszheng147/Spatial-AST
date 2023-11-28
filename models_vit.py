@@ -11,36 +11,63 @@
 import numba
 from functools import partial
 
-import numpy as np
-
 import torch
 import torch.nn as nn
 import torchaudio
 
 from torchlibrosa.stft import STFT, LogmelFilterBank
-from torchlibrosa.augmentation import SpecAugmentation
+from timm.models.layers import to_2tuple
 
-from vision_transformer import VisionTransformer, PatchEmbed_new
+from vision_transformer import VisionTransformer as _VisionTransformer
 
-class PhaseSpectrogramReducer(nn.Module):
-    def __init__(self, n_bins, n_mels):
+class AutomaticWeightedLoss(nn.Module):
+    def __init__(self, num=2):
         super().__init__()
-        self.phase_matrix = nn.Parameter(torch.randn(n_bins, n_mels))
+        params = torch.ones(num, requires_grad=True)
+        self.params = torch.nn.Parameter(params)
 
     def forward(self, x):
-        sin_part = torch.matmul(torch.sin(x), self.phase_matrix)
-        cos_part = torch.matmul(torch.cos(x), self.phase_matrix)
-        reduced_phase = torch.atan2(sin_part, cos_part)
-        return reduced_phase
+        loss_sum = 0
+        for i, loss in enumerate(x):
+            loss_sum += 0.5 / (self.params[i] ** 2) * loss + torch.log(1 + self.params[i] ** 2)
+        return loss_sum
 
+class PatchEmbed_new(nn.Module):
+    """ Flexible Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, stride=10):
+        super().__init__()
+        img_size = to_2tuple(img_size)
+        patch_size = to_2tuple(patch_size)
+        stride = to_2tuple(stride)
+        
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.in_chans = in_chans
 
-class VisionTransformer(VisionTransformer):
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) # with overlapped patches
+        _, _, h, w = self.get_output_shape(img_size) # n, emb_dim, h, w
+        self.patch_hw = (h, w)
+        self.num_patches = h*w
+
+    def get_output_shape(self, img_size):
+        return self.proj(torch.randn(1, self.in_chans, img_size[0], img_size[1])).shape 
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+
+        x = self.proj(x) # 32, 1, 1024, 128 -> 32, 768, 101, 12
+        x = x.flatten(2) # 32, 768, 101, 12 -> 32, 768, 1212
+        x = x.transpose(1, 2) # 32, 768, 1212 -> 32, 1212, 768
+        return x
+
+class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
     def __init__(self, global_pool=False, mask_2d=True, use_custom_patch=False, **kwargs):
-        super().__init__(**kwargs)
+        super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
-        in_chans = 4
+        in_chans = 2
         emb_dim = 768
 
         self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
@@ -57,11 +84,11 @@ class VisionTransformer(VisionTransformer):
             sr=32000, n_fft=1024, n_mels=128, fmin=50, 
             fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
         )
-        self.phase_extractor = PhaseSpectrogramReducer(*self.logmel_extractor.melW.shape)
-        self.spec_augmenter = SpecAugmentation(time_drop_width=64, time_stripes_num=2, 
-                                    freq_drop_width=8, freq_stripes_num=2) # 2 2
         
-        self.input_norm = nn.BatchNorm2d(128)
+        self.timem = torchaudio.transforms.TimeMasking(192)
+        self.freqm = torchaudio.transforms.FrequencyMasking(48)
+
+        self.mel_norm = nn.BatchNorm2d(2, affine=False)
 
         self.global_pool = global_pool
         if self.global_pool:
@@ -71,9 +98,8 @@ class VisionTransformer(VisionTransformer):
         del self.norm  # remove the original norm
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
-        
         self.target_frame = 1024
-        
+
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
@@ -85,29 +111,12 @@ class VisionTransformer(VisionTransformer):
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
-        x = self.pos_drop(x)
+        x = self.pos_drop(x)        
 
-        x2 = x
-        # apply Transformer blocks
-        for blk in self.blocks:
+        for blk in self.shared_blocks:
             x = blk(x)
 
-        for blk2 in self.blocks2:
-            x2 = blk2(x2)
-
-        if self.global_pool:
-            x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
-            x2 = x2[:, 1:, :].mean(dim=1)  # global pool without cls token
-            outcome = self.fc_norm(x)
-            outcome2 = self.fc_norm(x2)
-        else:
-            x = self.norm(x)
-            x2 = self.norm(x2)
-            outcome = x[:, 0]
-            outcome2 = x2[:, 0]
-
-        return outcome, outcome2
-
+        return x
 
     def random_masking(self, x, mask_ratio):
         """
@@ -183,7 +192,6 @@ class VisionTransformer(VisionTransformer):
             
         return x_masked, None, None
 
-
     def forward_features_mask(self, x, mask_t_prob, mask_f_prob):
         B = x.shape[0] #4,1,1024,128
         x = self.patch_embed(x) # 4, 512, 768
@@ -198,97 +206,57 @@ class VisionTransformer(VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)        
         x = self.pos_drop(x)
 
-        x2 = x
         # apply Transformer blocks
-        for blk in self.blocks:
+        for blk in self.shared_blocks:
             x = blk(x)
+
+        return x
+
+    # overwrite original timm
+    def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
+        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        B, C, T = waveforms.shape
+
+        waveforms = waveforms.reshape(B * C, T)
+        # bsz* channels, 1024, 513
+        real, imag = self.spectrogram_extractor(waveforms) 
+        x = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        x = self.mel_norm(x) * 0.5
+
+        if x.shape[2] < self.target_frame:
+            x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
+            
+        if self.training:
+            x = x.transpose(-2, -1) # bsz, 4, 1024, 128 --> bsz, 4, 128, 1024
+            x = self.freqm(x)
+            x = self.timem(x)
+            x = x.transpose(-2, -1)
+
+        if mask_t_prob > 0.0 or mask_f_prob > 0.0:
+            x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
+        else:
+            x = self.forward_features(x)
+        
+        x2 = x
+        for blk1 in self.blocks1:
+            x = blk1(x)
 
         for blk2 in self.blocks2:
             x2 = blk2(x2)
 
-        if self.global_pool:
-            x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
-            x2 = x2[:, 1:, :].mean(dim=1)  # global pool without cls token
-            outcome = self.fc_norm(x)
-            outcome2 = self.fc_norm(x2)
-        else:
-            x = self.norm(x)
-            x2 = self.norm(x2)
-            outcome = x[:, 0]
-            outcome2 = x2[:, 0]
+        x = x[:, 1:].mean(dim=1)
+        x2 = x2[:, 1:].mean(dim=1)
 
-        return outcome, outcome2
-
-
-    # overwrite original timm
-    def forward(self, waveforms, reverbs, v=None, mask_t_prob=0.0, mask_f_prob=0.0):
-        B, C = reverbs.shape[:2]
-        T = waveforms.shape[-1]
-        
-        if self.training:
-            noise = torch.randn(waveforms.size(), device=waveforms.device)
-            noise_probability = 0.4
-            mask = torch.rand(B, device=waveforms.device) < noise_probability
-            waveforms[mask] += noise[mask]
-        
-        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :T]
-        waveforms = waveforms.reshape(B * C, T)
-    
-        real, imag = self.spectrogram_extractor(waveforms) 
-        logmel_features = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
-        phase_features = self.phase_extractor(torch.atan2(imag, real)).reshape(B, C, -1, 128)
-        del real, imag
-        
-        x = torch.cat([logmel_features, phase_features], dim=1)
-        if x.shape[2] < self.target_frame:
-            x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
-        
-        if self.training:
-            x = self.spec_augmenter(x)
-
-        x = x.transpose(1, 3)
-        x = self.input_norm(x)
-        x = x.transpose(1, 3)
-        
-        if self.training:
-            noise = torch.randn(x.size(), device=x.device)
-            noise_probability = 0.25
-            mask = torch.rand(B, device=x.device) < noise_probability
-            x[mask] += noise[mask]
-
-        if mask_t_prob > 0.0 or mask_f_prob > 0.0:
-            x, x2 = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
-        else:
-            x, x2 = self.forward_features(x)
-        
-        classify = self.head(x)
+        classifier = self.head(x)
         distance = self.distance_head(x2)
         azimuth = self.azimuth_head(x2)
-        elevation = self.elevation_head(x2)
-        return classify, distance, azimuth, elevation
+        elevation = self.elevation_head(x2)        
+        return classifier, distance, azimuth, elevation
 
-
-def vit_small_patch16(**kwargs):
-    model = VisionTransformer(
-        patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)        
-    return model
 
 def vit_base_patch16(**kwargs):
     model = VisionTransformer(
-        patch_size=16, embed_dim=768, depth=6, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
-
-def vit_large_patch16(**kwargs):
-    model = VisionTransformer(
-        patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-def vit_huge_patch14(**kwargs):
-    model = VisionTransformer(
-        patch_size=14, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model

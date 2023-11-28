@@ -45,9 +45,9 @@ def gen_weight(json_file, label_file, output_file):
 
 if __name__ == '__main__':
     #args = parser.parse_args()
-    json_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/unbalanced_no_missing.json'
+    json_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/balanced_no_missing.json'
     label_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv'
-    output_file='./weight_train_all.csv'
+    output_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/distributed/balanced.csv'
     gen_weight(json_file, label_file, output_file)
 
 
