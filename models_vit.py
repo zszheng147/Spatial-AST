@@ -100,6 +100,14 @@ class VisionTransformer(_VisionTransformer):
         self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
 
+        self.proj = nn.Sequential(
+            nn.Linear(emb_dim, emb_dim * 4),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(emb_dim * 4, emb_dim),
+            nn.GELU(),
+        )
+
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
@@ -112,6 +120,9 @@ class VisionTransformer(_VisionTransformer):
         cls_tokens = cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
         x = self.pos_drop(x)        
+
+        for blk in self.blocks:
+            x = blk(x)
 
         return x
 
@@ -203,6 +214,9 @@ class VisionTransformer(_VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)        
         x = self.pos_drop(x)
 
+        for blk in self.blocks:
+            x = blk(x)
+
         return x
 
     # overwrite original timm
@@ -214,11 +228,11 @@ class VisionTransformer(_VisionTransformer):
         # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
         x = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
-        x = self.mel_norm(x) * 0.5
 
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
-            
+        
+        x = self.mel_norm(x) * 0.5
         if self.training:
             x = x.transpose(-2, -1) # bsz, 4, 1024, 128 --> bsz, 4, 128, 1024
             x = self.freqm(x)
@@ -230,22 +244,15 @@ class VisionTransformer(_VisionTransformer):
         else:
             x = self.forward_features(x)
         
-        x2 = x
-        for blk in self.blocks:
-            x = blk(x)
-        
-        for blk2 in self.blocks2:
-            x2 = blk2(x2)
-
+        spatial_x = x + self.proj(x)
         x = x[:, 1:].mean(dim=1)
         x = self.fc_norm(x)
-        x2 = x2[:, 1:].mean(dim=1)
-        x2 = self.fc_norm(x2)
-
         classifier = self.head(x)
-        distance = self.distance_head(x2)
-        azimuth = self.azimuth_head(x2)
-        elevation = self.elevation_head(x2)        
+
+        distance = self.distance_head(spatial_x)[:, 1:].mean(dim=1)
+        azimuth = self.azimuth_head(spatial_x)[:, 1:].mean(dim=1)
+        elevation = self.elevation_head(spatial_x)[:, 1:].mean(dim=1)
+
         return classifier, distance, azimuth, elevation
 
 

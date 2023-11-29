@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=3
 
 blr=1e-3
 mask_t_prob=0.25
@@ -22,7 +22,7 @@ log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-20k
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=4 --use_env main_finetune_as.py \
+    --nproc_per_node=1 --use_env main_finetune_as.py \
 	--log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \

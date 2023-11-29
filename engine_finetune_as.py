@@ -64,14 +64,22 @@ def train_one_epoch(
 
         # with torch.cuda.amp.autocast():
         outputs = model(waveforms, reverbs, mask_t_prob=args.mask_t_prob, mask_f_prob=args.mask_f_prob)
+        
+        logits = torch.sort(torch.softmax(outputs[0], dim=1), descending=True, dim=1)[1]
+        valid_indices = []
+        for i in range(logits.size(0)):
+            nonzero_indices = (targets[i] > 0).nonzero(as_tuple=True)[0]
+            is_valid = 1 if all(idx.item() in logits[i, :len(nonzero_indices)] for idx in nonzero_indices) else 0
+            valid_indices.append(is_valid)
+        valid_indices = torch.tensor(valid_indices).float().to(device)
 
-        loss = mtl_loss_fn([
-                criterion(outputs[0], targets), 
-                F.cross_entropy(outputs[1], distance),
-                F.cross_entropy(outputs[2], azimuth), 
-                F.cross_entropy(outputs[3], elevation)
-            ]
-        )
+        loss1 = criterion(outputs[0], targets)
+        loss2 = valid_indices * F.cross_entropy(outputs[1], distance, reduction='none')
+        loss3 = valid_indices * F.cross_entropy(outputs[2], azimuth, reduction='none')
+        loss4 = valid_indices * F.cross_entropy(outputs[3], elevation, reduction='none')
+
+        loss = mtl_loss_fn([loss1, loss2, loss3, loss4])
+            
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
