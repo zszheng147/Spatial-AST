@@ -376,24 +376,32 @@ def main(args):
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
 
-        if 'shared_blocks.0.mlp.fc1.weight' not in checkpoint_model:
-            for k in list(checkpoint_model.keys()):
-                if k.startswith('blocks'):
-                    new_k = k.replace('blocks', 'shared_blocks')
-                    checkpoint_model[new_k] = checkpoint_model[k]
-                    del checkpoint_model[k]
+        # if 'shared_blocks.0.mlp.fc1.weight' not in checkpoint_model:
+        #     for k in list(checkpoint_model.keys()):
+        #         if k.startswith('blocks'):
+        #             new_k = k.replace('blocks', 'shared_blocks')
+        #             checkpoint_model[new_k] = checkpoint_model[k]
+        #             del checkpoint_model[k]
 
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
 
         if not args.eval:
-            trunc_normal_(model.head.weight, std=2e-5)
+            # trunc_normal_(model.head.weight, std=2e-5)
             trunc_normal_(model.distance_head.weight, std=2e-5)
             trunc_normal_(model.azimuth_head.weight, std=2e-5)
             trunc_normal_(model.elevation_head.weight, std=2e-5)
     
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
+    for n, p in model.named_parameters():
+        if n.startswith('blocks2') or '_head' in n or 'fc_norm' in n:
+            p.requires_grad = True
+        else:
+            p.requires_grad = False
+
+        if p.requires_grad:
+            print(f"Trainable param: {n}, {p.shape}, {p.dtype}")
+
     model.to(device)
 
     model_without_ddp = model

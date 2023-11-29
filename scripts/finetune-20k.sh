@@ -1,13 +1,13 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,6
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 blr=1e-3
-mask_t_prob=0.2
-mask_f_prob=0.2
+mask_t_prob=0.25
+mask_f_prob=0.25
 
 dataset=audioset
-ckpt=/mnt/lustre/sjtu/home/zsz01/models/audiomae/finetuned.pth
+ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-2m-round2/checkpoint-23-best.pth
 
 audioset_label=/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv
 audioset_train_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/balanced_no_missing.json
@@ -22,7 +22,7 @@ log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-20k
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=6 --use_env main_finetune_as.py \
+    --nproc_per_node=4 --use_env main_finetune_as.py \
 	--log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
@@ -36,10 +36,10 @@ python -m torch.distributed.launch \
     --finetune $ckpt \
     --blr $blr \
     --dist_eval \
-    --batch_size 96 \
-    --num_workers 8 \
+    --batch_size 48 \
+    --num_workers 4 \
     --roll_mag_aug \
-    --mixup 0.0 \
+    --mixup 0.5 \
     --mask_t_prob $mask_t_prob \
     --mask_f_prob $mask_f_prob \
     --first_eval_ep 0 \

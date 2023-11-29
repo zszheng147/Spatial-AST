@@ -113,9 +113,6 @@ class VisionTransformer(_VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)
         x = self.pos_drop(x)        
 
-        for blk in self.shared_blocks:
-            x = blk(x)
-
         return x
 
     def random_masking(self, x, mask_ratio):
@@ -206,10 +203,6 @@ class VisionTransformer(_VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)        
         x = self.pos_drop(x)
 
-        # apply Transformer blocks
-        for blk in self.shared_blocks:
-            x = blk(x)
-
         return x
 
     # overwrite original timm
@@ -238,14 +231,16 @@ class VisionTransformer(_VisionTransformer):
             x = self.forward_features(x)
         
         x2 = x
-        for blk1 in self.blocks1:
-            x = blk1(x)
-
+        for blk in self.blocks:
+            x = blk(x)
+        
         for blk2 in self.blocks2:
             x2 = blk2(x2)
 
         x = x[:, 1:].mean(dim=1)
+        x = self.fc_norm(x)
         x2 = x2[:, 1:].mean(dim=1)
+        x2 = self.fc_norm(x2)
 
         classifier = self.head(x)
         distance = self.distance_head(x2)
