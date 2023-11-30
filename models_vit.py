@@ -21,7 +21,7 @@ from timm.models.layers import to_2tuple
 from vision_transformer import VisionTransformer as _VisionTransformer
 
 class AutomaticWeightedLoss(nn.Module):
-    def __init__(self, num=2):
+    def __init__(self, num=4):
         super().__init__()
         params = torch.ones(num, requires_grad=True)
         self.params = torch.nn.Parameter(params)
@@ -100,13 +100,14 @@ class VisionTransformer(_VisionTransformer):
         self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
 
-        self.proj = nn.Sequential(
-            nn.Linear(emb_dim, emb_dim * 4),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(emb_dim * 4, emb_dim),
-            nn.GELU(),
-        )
+        # self.proj = nn.Identity()
+        # self.spatial_proj = nn.Sequential(
+        #     nn.Linear(emb_dim, emb_dim * 2),
+        #     nn.GELU(),
+        #     nn.Dropout(0.2),
+        #     nn.Linear(emb_dim * 2, emb_dim),
+        #     nn.GELU(),
+        # )
 
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
@@ -121,11 +122,14 @@ class VisionTransformer(_VisionTransformer):
         x = torch.cat((cls_tokens, x), dim=1)
         x = self.pos_drop(x)        
 
-        for blk in self.blocks:
+        x = self.pos_drop(x)
+        
+        spatial_x = x
+        for idx, blk in enumerate(self.blocks):
             x = blk(x)
 
-        return x
-
+        return x, spatial_x
+    
     def random_masking(self, x, mask_ratio):
         """
         Perform per-sample random masking by per-sample shuffling.
@@ -213,11 +217,12 @@ class VisionTransformer(_VisionTransformer):
         cls_tokens = cls_token.expand(B, -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)        
         x = self.pos_drop(x)
-
-        for blk in self.blocks:
+        
+        spatial_x = x
+        for idx, blk in enumerate(self.blocks):
             x = blk(x)
 
-        return x
+        return x, spatial_x
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
@@ -240,11 +245,13 @@ class VisionTransformer(_VisionTransformer):
             x = x.transpose(-2, -1)
 
         if mask_t_prob > 0.0 or mask_f_prob > 0.0:
-            x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
+            x, spatial_x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
         else:
-            x = self.forward_features(x)
+            x, spatial_x = self.forward_features(x)
         
-        spatial_x = x + self.proj(x)
+        for blk2 in self.blocks2:
+            spatial_x = blk2(spatial_x)
+
         x = x[:, 1:].mean(dim=1)
         x = self.fc_norm(x)
         classifier = self.head(x)

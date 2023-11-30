@@ -386,6 +386,10 @@ def main(args):
             trunc_normal_(model.elevation_head.weight, std=2e-5)
     
     for n, p in model.named_parameters():
+        if 'blocks2' in n or '_head' in n:
+            p.requires_grad = True
+        else:
+            p.requires_grad = False
         if p.requires_grad:
             print(f"Trainable param: {n}, {p.shape}, {p.dtype}")
 
