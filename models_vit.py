@@ -16,14 +16,15 @@ import torch.nn as nn
 import torchaudio
 
 from torchlibrosa.stft import STFT, LogmelFilterBank
-from timm.models.layers import to_2tuple
+from timm.models.layers import to_2tuple, trunc_normal_
 
+from utils.pos_embed import get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_flexible, get_1d_sincos_pos_embed_from_grid
 from vision_transformer import VisionTransformer as _VisionTransformer
 
 class AutomaticWeightedLoss(nn.Module):
-    def __init__(self, num=4):
+    def __init__(self, num):
         super().__init__()
-        params = torch.ones(num, requires_grad=True)
+        params = torch.ones(num, requires_grad=False)
         self.params = torch.nn.Parameter(params)
 
     def forward(self, x):
@@ -70,9 +71,14 @@ class VisionTransformer(_VisionTransformer):
         in_chans = 2
         emb_dim = 768
 
+        self.doa_tokens = nn.Parameter(torch.zeros(1, 2, emb_dim))
+        torch.nn.init.normal_(self.doa_tokens, std=.02)
+
         self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
+        w = self.patch_embed.proj.weight.data
+        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        
         num_patches = self.patch_embed.num_patches
-        #num_patches = 512 # assume audioset, 1024//16=64, 128//16=8, 512=64x8
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
 
         self.spectrogram_extractor = STFT(
@@ -90,46 +96,46 @@ class VisionTransformer(_VisionTransformer):
 
         self.mel_norm = nn.BatchNorm2d(2, affine=False)
 
-        self.global_pool = global_pool
-        if self.global_pool:
-            norm_layer = kwargs['norm_layer']
-            embed_dim = kwargs['embed_dim']
-            self.fc_norm = norm_layer(embed_dim)
-        del self.norm  # remove the original norm
+        # self.global_pool = global_pool
+        # if self.global_pool:
+        #     norm_layer = kwargs['norm_layer']
+        #     embed_dim = kwargs['embed_dim']
+        #     self.fc_norm = norm_layer(embed_dim)
+        # del self.norm  # remove the original norm
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
 
-        # self.proj = nn.Identity()
-        # self.spatial_proj = nn.Sequential(
-        #     nn.Linear(emb_dim, emb_dim * 2),
-        #     nn.GELU(),
-        #     nn.Dropout(0.2),
-        #     nn.Linear(emb_dim * 2, emb_dim),
-        #     nn.GELU(),
-        # )
+        self.dis_norm = nn.LayerNorm(emb_dim)
+        self.doa_norm = nn.LayerNorm(emb_dim)
 
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
 
+        trunc_normal_(self.head.weight, std=2e-5)
+        trunc_normal_(self.distance_head.weight, std=2e-5)
+        trunc_normal_(self.azimuth_head.weight, std=2e-5)
+        trunc_normal_(self.elevation_head.weight, std=2e-5)
+
+
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x)
         x = x + self.pos_embed[:, 1:, :]
+    
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
-        cls_tokens = cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
-        x = torch.cat((cls_tokens, x), dim=1)
-        x = self.pos_drop(x)        
-
+        cls_tokens = cls_token.expand(B, -1, -1)
+        doa_tokens = self.doa_tokens.expand(B, -1, -1)
+        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)    # bsz, 512 + 2 + 1, 768    
         x = self.pos_drop(x)
         
-        spatial_x = x
-        for idx, blk in enumerate(self.blocks):
+        for blk in self.blocks:
             x = blk(x)
 
-        return x, spatial_x
-    
+        return x
+
+
     def random_masking(self, x, mask_ratio):
         """
         Perform per-sample random masking by per-sample shuffling.
@@ -207,22 +213,23 @@ class VisionTransformer(_VisionTransformer):
     def forward_features_mask(self, x, mask_t_prob, mask_f_prob):
         B = x.shape[0] #4,1,1024,128
         x = self.patch_embed(x) # 4, 512, 768
-
         x = x + self.pos_embed[:, 1:, :]
+
         if self.random_masking_2d:
             x, mask, ids_restore = self.random_masking_2d(x, mask_t_prob, mask_f_prob)
         else:
             x, mask, ids_restore = self.random_masking(x, mask_t_prob)
+        
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(B, -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)        
+        doa_tokens = self.doa_tokens.expand(B, -1, -1)
+        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)   # bsz, 512 + 2 + 1, 768 
         x = self.pos_drop(x)
         
-        spatial_x = x
-        for idx, blk in enumerate(self.blocks):
+        for blk in self.blocks:
             x = blk(x)
 
-        return x, spatial_x
+        return x
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
@@ -245,20 +252,22 @@ class VisionTransformer(_VisionTransformer):
             x = x.transpose(-2, -1)
 
         if mask_t_prob > 0.0 or mask_f_prob > 0.0:
-            x, spatial_x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
+            x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
         else:
-            x, spatial_x = self.forward_features(x)
+            x = self.forward_features(x)
         
-        for blk2 in self.blocks2:
-            spatial_x = blk2(spatial_x)
+        dis_token = x[:, 0]
+        doa_token = x[:, 1]
+        cls_token = x[:, 2]
 
-        x = x[:, 1:].mean(dim=1)
-        x = self.fc_norm(x)
-        classifier = self.head(x)
+        dis_token = self.dis_norm(dis_token)
+        doa_token = self.doa_norm(doa_token)
+        cls_token = self.norm(cls_token)
 
-        distance = self.distance_head(spatial_x)[:, 1:].mean(dim=1)
-        azimuth = self.azimuth_head(spatial_x)[:, 1:].mean(dim=1)
-        elevation = self.elevation_head(spatial_x)[:, 1:].mean(dim=1)
+        classifier = self.head(cls_token)
+        distance = self.distance_head(dis_token)
+        azimuth = self.azimuth_head(doa_token)
+        elevation = self.elevation_head(doa_token)
 
         return classifier, distance, azimuth, elevation
 

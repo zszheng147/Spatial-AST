@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export TORCH_DISTRIBUTED_DEBUG="DETAIL"
 
 blr=1e-3
@@ -8,8 +8,8 @@ mask_t_prob=0.25
 mask_f_prob=0.25
 
 dataset=audioset
-ckpt=/mnt/lustre/sjtu/home/zsz01/models/audiomae/pretrained.pth
-# ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-2m/checkpoint-0.pth
+# ckpt=/mnt/lustre/sjtu/home/zsz01/models/audiomae/pretrained.pth
+ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-2m-round2/checkpoint-23-best.pth
 
 audioset_label=/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv
 audioset_train_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/unbalanced_no_missing.json
@@ -25,7 +25,7 @@ log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=2 --master_port=29522 --use_env main_finetune_as.py \
+    --nproc_per_node=4 --master_port=29522 --use_env main_finetune_as.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
@@ -40,16 +40,15 @@ python -m torch.distributed.launch \
     --finetune $ckpt \
     --blr $blr \
     --dist_eval \
-    --batch_size 24 \
+    --batch_size 64 \
+    --num_workers 4 \
     --roll_mag_aug \
-    --mixup 0.25 \
+    --mixup 0.5 \
     --mask_t_prob $mask_t_prob \
     --mask_f_prob $mask_f_prob \
     --first_eval_ep 0 \
-    --epochs 50 \
+    --epochs 100 \
     --warmup_epochs 10 \
     --weight_sampler \
     --distributed_wrapper \
     --mask_2d \
-    --num_workers 4 \
-    --epoch_len 20000 \

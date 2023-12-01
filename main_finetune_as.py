@@ -339,7 +339,7 @@ def main(args):
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
-        batch_size=16,
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False,
@@ -371,7 +371,7 @@ def main(args):
         state_dict = model.state_dict()
 
         if not args.eval:
-            for k in ['head.weight', 'head.bias', 'patch_embed.proj.weight', 'patch_embed.proj.bias']:
+            for k in ['patch_embed.proj.weight', 'patch_embed.proj.bias', 'head.weight', 'head.bias']:
                 if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
                     print(f"Removing key {k} from pretrained checkpoint")
                     del checkpoint_model[k]
@@ -379,17 +379,7 @@ def main(args):
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
 
-        if not args.eval:
-            # trunc_normal_(model.head.weight, std=2e-5)
-            trunc_normal_(model.distance_head.weight, std=2e-5)
-            trunc_normal_(model.azimuth_head.weight, std=2e-5)
-            trunc_normal_(model.elevation_head.weight, std=2e-5)
-    
     for n, p in model.named_parameters():
-        if 'blocks2' in n or '_head' in n:
-            p.requires_grad = True
-        else:
-            p.requires_grad = False
         if p.requires_grad:
             print(f"Trainable param: {n}, {p.shape}, {p.dtype}")
 

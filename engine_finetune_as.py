@@ -76,7 +76,7 @@ def train_one_epoch(
         # # valid_indices = torch.ones(outputs[0].size(0)).float().to(device)
         # valid_cnt = torch.sum(valid_indices)
 
-        # loss1 = criterion(outputs[0], targets)
+        loss1 = criterion(outputs[0], targets)
         loss2 = F.cross_entropy(outputs[1], distance)
         loss3 = F.cross_entropy(outputs[2], azimuth)
         loss4 = F.cross_entropy(outputs[3], elevation)
@@ -89,7 +89,7 @@ def train_one_epoch(
         #     loss3 = torch.tensor(0.).to(device)
         #     loss4 = torch.tensor(0.).to(device)
             
-        loss = 0.2 * loss2 + loss3 + loss4
+        loss = 20 * loss1 + 1 * loss2 + 1.5 * (loss3 + loss4)
         # loss = mtl_loss_fn([loss1, loss2, loss3, loss4])
             
         loss_value = loss.item()
@@ -131,6 +131,7 @@ def train_one_epoch(
     print(f"Loss weight: {mtl_loss_fn.params}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
+@torch.no_grad()
 def evaluate(data_loader, model, device, dist_eval=False):
     metric_logger = misc.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -214,79 +215,6 @@ def evaluate(data_loader, model, device, dist_eval=False):
         "doa_error": spatial_outputs[1]/total_samples,
         "doa_angular_error": spatial_outputs[2]/total_samples
     }
-# @torch.no_grad()
-# def evaluate(data_loader, model, device, dist_eval=False):
-#     criterion = torch.nn.BCEWithLogitsLoss()
-
-#     metric_logger = misc.MetricLogger(delimiter="  ")
-#     header = 'Test:'
-
-#     # switch to evaluation mode
-#     model.eval()
-#     sed_outputs = []
-#     sed_targets = []
-#     vids = []
-
-#     all_distance_preds = []
-#     all_distances = []
-
-#     doa_dists = []
-#     for batch in metric_logger.log_every(data_loader, 300, header):
-
-#         waveforms, reverbs = batch[0], batch[1]
-#         target, spaital_targets = batch[2], batch[3]
-#         # compute output
-
-#         output = model(waveforms, reverbs)
-#         # remark: 
-#         # 1. use concat_all_gather and --dist_eval for faster eval by distributed load over gpus
-#         # 2. otherwise comment concat_all_gather and remove --dist_eval one every gpu
-#         # if dist_eval:
-#         #     sed_outputs = concat_all_gather(output[0])
-#         #     sed_targets = concat_all_gather(target)
-#         sed_outputs.append(output[0].detach().cpu().numpy())
-#         sed_targets.append(target.cpu().numpy())
-
-#         all_distances.append(spaital_targets['distance'].numpy())
-#         all_distance_preds.append(torch.argmax(output[1], dim=1).detach().cpu().numpy())
-        
-#         az_pred = torch.argmax(output[2], dim=1).detach().cpu().numpy()
-#         ele_pred = torch.argmax(output[3], dim=1).detach().cpu().numpy()
-#         az_gt = spaital_targets['azimuth'].long().numpy()
-#         ele_gt = spaital_targets['elevation'].long().numpy()
-#         doa_dist = distance_between_spherical_coordinates_rad(az_gt, ele_gt, az_pred, ele_pred)
-
-#         doa_dists.append(doa_dist)
-
-#     sed_outputs = np.concatenate(sed_outputs)
-#     sed_targets = np.concatenate(sed_targets)
-#     stats = calculate_stats(sed_outputs, sed_targets)
-#     AP = [stat['AP'] for stat in stats]
-#     mAP = np.mean([stat['AP'] for stat in stats])
-
-#     all_distance_preds = np.concatenate(all_distance_preds)
-#     all_distances = np.concatenate(all_distances)
-#     doa_dists = np.concatenate(doa_dists)
-#     total_samples = len(all_distances)
-#     threshold = 20
-
-#     distance_correct = np.sum([1 for truth, pred in zip(all_distances, all_distance_preds) if abs(truth - pred) <= 1])
-#     doa_angular_error = np.sum(doa_dists)
-#     doa_error = np.sum(doa_dists > threshold) # 
-
-#     outputs = [mAP, distance_correct, doa_angular_error, doa_error]
-
-#     if dist_eval:        
-#         outputs = torch.tensor(outputs).to(device)
-#         torch.distributed.all_reduce(outputs, op=torch.distributed.ReduceOp.SUM)
-        
-#         total_samples = torch.tensor(total_samples).to(device)
-#         torch.distributed.all_reduce(total_samples, op=torch.distributed.ReduceOp.SUM)
-        
-#         outputs = outputs.cpu().numpy()
-#         total_samples = total_samples.cpu().numpy()
-
-#     return outputs, total_samples
 
 
 def distance_between_spherical_coordinates_rad(az1, ele1, az2, ele2):
