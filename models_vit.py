@@ -65,7 +65,7 @@ class PatchEmbed_new(nn.Module):
 class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
-    def __init__(self, global_pool=False, mask_2d=True, use_custom_patch=False, **kwargs):
+    def __init__(self, cls_num=False, mask_2d=True, use_custom_patch=False, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 2
@@ -73,6 +73,11 @@ class VisionTransformer(_VisionTransformer):
 
         self.doa_tokens = nn.Parameter(torch.zeros(1, 2, emb_dim))
         torch.nn.init.normal_(self.doa_tokens, std=.02)
+
+        del self.cls_token
+        self.cls_num = cls_num
+        self.cls_tokens = nn.Parameter(torch.zeros(1, cls_num, emb_dim))
+        torch.nn.init.normal_(self.cls_tokens, std=.02)
 
         self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
         w = self.patch_embed.proj.weight.data
@@ -101,13 +106,15 @@ class VisionTransformer(_VisionTransformer):
         #     norm_layer = kwargs['norm_layer']
         #     embed_dim = kwargs['embed_dim']
         #     self.fc_norm = norm_layer(embed_dim)
-        # del self.norm  # remove the original norm
+        del self.norm  # remove the original norm
+
         self.mask_2d = mask_2d
         self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
 
-        self.dis_norm = nn.LayerNorm(emb_dim)
-        self.doa_norm = nn.LayerNorm(emb_dim)
+        self.dis_norm = kwargs['norm_layer'](emb_dim)
+        self.doa_norm = kwargs['norm_layer'](emb_dim)
+        self.fc_norm = kwargs['norm_layer'](emb_dim)
 
         self.distance_head = nn.Linear(emb_dim, 11)
         self.azimuth_head = nn.Linear(emb_dim, 360)
@@ -124,17 +131,16 @@ class VisionTransformer(_VisionTransformer):
         x = self.patch_embed(x)
         x = x + self.pos_embed[:, 1:, :]
     
-        cls_token = self.cls_token + self.pos_embed[:, :1, :]
-        cls_tokens = cls_token.expand(B, -1, -1)
+        cls_tokens = self.cls_tokens
+        cls_tokens = cls_tokens.expand(B, -1, -1)
         doa_tokens = self.doa_tokens.expand(B, -1, -1)
-        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)    # bsz, 512 + 2 + 1, 768    
+        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)    # bsz, 512 + 2 + 10, 768    
         x = self.pos_drop(x)
         
         for blk in self.blocks:
             x = blk(x)
 
         return x
-
 
     def random_masking(self, x, mask_ratio):
         """
@@ -220,10 +226,10 @@ class VisionTransformer(_VisionTransformer):
         else:
             x, mask, ids_restore = self.random_masking(x, mask_t_prob)
         
-        cls_token = self.cls_token + self.pos_embed[:, :1, :]
-        cls_tokens = cls_token.expand(B, -1, -1)
+        cls_tokens = self.cls_tokens
+        cls_tokens = cls_tokens.expand(B, -1, -1)
         doa_tokens = self.doa_tokens.expand(B, -1, -1)
-        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)   # bsz, 512 + 2 + 1, 768 
+        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)   # bsz, 512 + 2 + 10, 768 
         x = self.pos_drop(x)
         
         for blk in self.blocks:
@@ -258,13 +264,13 @@ class VisionTransformer(_VisionTransformer):
         
         dis_token = x[:, 0]
         doa_token = x[:, 1]
-        cls_token = x[:, 2]
+        cls_tokens = x[:, 2:2+self.cls_num].mean(dim=1)
 
         dis_token = self.dis_norm(dis_token)
         doa_token = self.doa_norm(doa_token)
-        cls_token = self.norm(cls_token)
+        cls_tokens = self.fc_norm(cls_tokens)
 
-        classifier = self.head(cls_token)
+        classifier = self.head(cls_tokens)
         distance = self.distance_head(dis_token)
         azimuth = self.azimuth_head(doa_token)
         elevation = self.elevation_head(doa_token)

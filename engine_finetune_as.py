@@ -88,8 +88,8 @@ def train_one_epoch(
         #     loss2 = torch.tensor(0.).to(device)
         #     loss3 = torch.tensor(0.).to(device)
         #     loss4 = torch.tensor(0.).to(device)
-            
-        loss = 20 * loss1 + 1 * loss2 + 1.5 * (loss3 + loss4)
+        # loss = loss1
+        loss = 200 * loss1 + 1 * loss2 + 1.5 * (loss3 + loss4)
         # loss = mtl_loss_fn([loss1, loss2, loss3, loss4])
             
         loss_value = loss.item()
