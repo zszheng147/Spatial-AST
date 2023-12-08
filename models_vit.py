@@ -13,12 +13,13 @@ from functools import partial
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
+
 import torchaudio
 
 from torchlibrosa.stft import STFT, LogmelFilterBank
 from timm.models.layers import to_2tuple, trunc_normal_
 
-from utils.pos_embed import get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_flexible, get_1d_sincos_pos_embed_from_grid
 from vision_transformer import VisionTransformer as _VisionTransformer
 
 class AutomaticWeightedLoss(nn.Module):
@@ -65,7 +66,7 @@ class PatchEmbed_new(nn.Module):
 class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
-    def __init__(self, cls_num=False, mask_2d=True, use_custom_patch=False, **kwargs):
+    def __init__(self, cls_num=1, mask_2d=True, use_custom_patch=False, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 2
@@ -82,7 +83,7 @@ class VisionTransformer(_VisionTransformer):
         self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
         w = self.patch_embed.proj.weight.data
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        
+
         num_patches = self.patch_embed.num_patches
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, emb_dim), requires_grad=False)  # fixed sin-cos embedding
 
@@ -96,16 +97,12 @@ class VisionTransformer(_VisionTransformer):
             fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
         )
         
+        self.conv_proj = nn.Conv2d(in_channels=4, out_channels=2, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0))
+        
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
-        self.mel_norm = nn.BatchNorm2d(2, affine=False)
-
-        # self.global_pool = global_pool
-        # if self.global_pool:
-        #     norm_layer = kwargs['norm_layer']
-        #     embed_dim = kwargs['embed_dim']
-        #     self.fc_norm = norm_layer(embed_dim)
+        self.mel_norm = nn.BatchNorm2d(in_chans, affine=False)
         del self.norm  # remove the original norm
 
         self.mask_2d = mask_2d
@@ -126,66 +123,9 @@ class VisionTransformer(_VisionTransformer):
         trunc_normal_(self.elevation_head.weight, std=2e-5)
 
 
-    def forward_features(self, x):
-        B = x.shape[0]
-        x = self.patch_embed(x)
-        x = x + self.pos_embed[:, 1:, :]
-    
-        cls_tokens = self.cls_tokens
-        cls_tokens = cls_tokens.expand(B, -1, -1)
-        doa_tokens = self.doa_tokens.expand(B, -1, -1)
-        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)    # bsz, 512 + 2 + 10, 768    
-        x = self.pos_drop(x)
-        
-        for blk in self.blocks:
-            x = blk(x)
-
-        return x
-
-    def random_masking(self, x, mask_ratio):
-        """
-        Perform per-sample random masking by per-sample shuffling.
-        Per-sample shuffling is done by argsort random noise.
-        x: [N, L, D], sequence
-        """
-        N, L, D = x.shape  # batch, length, dim
-        len_keep = int(L * (1 - mask_ratio))
-        
-        noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
-        
-        # sort noise for each sample
-        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-
-        # keep the first subset
-        ids_keep = ids_shuffle[:, :len_keep]
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
-
-        # generate the binary mask: 0 is keep, 1 is remove
-        mask = torch.ones([N, L], device=x.device)
-        mask[:, :len_keep] = 0
-        # unshuffle to get the binary mask
-        mask = torch.gather(mask, dim=1, index=ids_restore)
-
-        return x_masked, mask, ids_restore
-
     def random_masking_2d(self, x, mask_t_prob, mask_f_prob):
-        """
-        2D: Spectrogram (msking t and f under mask_t_prob and mask_f_prob)
-        Perform per-sample random masking by per-sample shuffling.
-        Per-sample shuffling is done by argsort random noise.
-        x: [N, L, D], sequence
-        """
-        
         N, L, D = x.shape  # batch, length, dim
-        if self.use_custom_patch:
-            # # for AS
-            T=101 #64,101
-            F=12 #8,12
-        else:
-            # ## for AS 
-            T=64
-            F=8
+        T, F = 64, 8
         
         # mask T
         x = x.reshape(N, T, F, D)
@@ -218,14 +158,12 @@ class VisionTransformer(_VisionTransformer):
 
     def forward_features_mask(self, x, mask_t_prob, mask_f_prob):
         B = x.shape[0] #4,1,1024,128
-        x = self.patch_embed(x) # 4, 512, 768
+
         x = x + self.pos_embed[:, 1:, :]
 
-        if self.random_masking_2d:
+        if mask_t_prob > 0.0 or mask_f_prob > 0.0:
             x, mask, ids_restore = self.random_masking_2d(x, mask_t_prob, mask_f_prob)
-        else:
-            x, mask, ids_restore = self.random_masking(x, mask_t_prob)
-        
+
         cls_tokens = self.cls_tokens
         cls_tokens = cls_tokens.expand(B, -1, -1)
         doa_tokens = self.doa_tokens.expand(B, -1, -1)
@@ -245,23 +183,38 @@ class VisionTransformer(_VisionTransformer):
         waveforms = waveforms.reshape(B * C, T)
         # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
-        x = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        real = real.reshape(B, C, real.shape[-2], real.shape[-1])
+        imag = imag.reshape(B, C, imag.shape[-2], imag.shape[-1])
+
+        log_magnitude = torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8)
+        log_magnitude = self.mel_norm(log_magnitude) # TODO
+        # log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        
+        complex_x = torch.view_as_complex(torch.stack([real, imag], dim=-1))
+        ILD = 20 * torch.log10(torch.abs(complex_x[:, 1, :, :]) / torch.abs(complex_x[:, 0, :, :]) + 1e-8)
+        IPD = torch.atan2(
+            torch.imag(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) - 
+            torch.real(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :]), 
+            torch.real(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) + 
+            torch.imag(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :])
+        )
+        phase_feats = torch.stack([ILD, IPD], dim=1)
+
+        x = torch.cat([log_magnitude, phase_feats], dim=1)
 
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
         
-        x = self.mel_norm(x) * 0.5
         if self.training:
             x = x.transpose(-2, -1) # bsz, 4, 1024, 128 --> bsz, 4, 128, 1024
             x = self.freqm(x)
             x = self.timem(x)
             x = x.transpose(-2, -1)
 
-        if mask_t_prob > 0.0 or mask_f_prob > 0.0:
-            x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
-        else:
-            x = self.forward_features(x)
-        
+        x = self.conv_proj(x)
+        x = self.patch_embed(x)
+        x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
+
         dis_token = x[:, 0]
         doa_token = x[:, 1]
         cls_tokens = x[:, 2:2+self.cls_num].mean(dim=1)
