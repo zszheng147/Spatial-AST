@@ -9,7 +9,7 @@ mask_f_prob=0.25
 
 dataset=audioset
 ckpt=/mnt/lustre/sjtu/home/zsz01/models/audiomae/pretrained.pth
-# ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-IPD-ILD/checkpoint-50.pth
+# ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-DP/checkpoint-55.pth
 
 audioset_label=/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv
 audioset_train_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/unbalanced_no_missing.json
@@ -20,12 +20,12 @@ reverb_type=BINAURAL
 reverb_train_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/train_reverberation.json
 reverb_val_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/eval_reverberation.json
 
-output_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-log-magnitude-IPD-ILD
-log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-log-magnitude-IPD-ILD
+output_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-DP-test
+log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-2m-DP-test
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=4 --master_port=29522 --use_env main_finetune_as.py \
+    --nproc_per_node=4 --master_port=33321 --use_env main_finetune_as.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
@@ -40,7 +40,7 @@ python -m torch.distributed.launch \
     --finetune $ckpt \
     --blr $blr \
     --dist_eval \
-    --batch_size 64 \
+    --batch_size 32 \
     --num_workers 4 \
     --roll_mag_aug \
     --mixup 0.5 \
