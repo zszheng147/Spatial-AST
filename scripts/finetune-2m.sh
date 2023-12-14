@@ -40,7 +40,7 @@ python -m torch.distributed.launch \
     --finetune $ckpt \
     --blr $blr \
     --dist_eval \
-    --batch_size 32 \
+    --batch_size 64 \
     --num_workers 4 \
     --roll_mag_aug \
     --mixup 0.5 \
