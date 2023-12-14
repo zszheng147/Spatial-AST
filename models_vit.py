@@ -17,7 +17,7 @@ from torch.nn import functional as F
 
 import torchaudio
 
-from torchlibrosa.stft import STFT, LogmelFilterBank
+from torchlibrosa.stft import STFT
 from timm.models.layers import to_2tuple, trunc_normal_
 
 from vision_transformer import VisionTransformer as _VisionTransformer
@@ -107,44 +107,44 @@ class VisionTransformer(_VisionTransformer):
             center=True, pad_mode='reflect', freeze_parameters=True
         )
 
-        self.logmel_extractor = LogmelFilterBank(
-            sr=32000, n_fft=1024, n_mels=128, fmin=50, 
-            fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
-        )
+        # self.logmel_extractor = LogmelFilterBank(
+        #     sr=32000, n_fft=1024, n_mels=128, fmin=50, 
+        #     fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
+        # )
 
-        self.gate = nn.Sequential(
-            conv3x3(2, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-            conv3x3(4, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-        )
+        # self.gate = nn.Sequential(
+        #     conv3x3(2, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        #     conv3x3(4, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        # )
 
-        self.mag_stream = nn.Sequential(
-            conv1x1(2, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-            conv1x1(4, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-        )
+        # self.mag_stream = nn.Sequential(
+        #     conv1x1(2, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        #     conv1x1(4, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        # )
 
-        self.phase_stream = nn.Sequential(
-            conv1x1(2, 4),
-            SinCosConcat(),
-            conv1x1(8, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-        )
+        # self.phase_stream = nn.Sequential(
+        #     conv1x1(2, 4),
+        #     SinCosConcat(),
+        #     conv1x1(8, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        # )
         self.conv_proj = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
+            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
             nn.BatchNorm2d(16),
             nn.GELU(),
-            conv1x1(16, 4),
+            conv3x3(16, 4),
             nn.BatchNorm2d(4),
             nn.GELU(),
-            conv1x1(4, 1),
+            conv3x3(4, 1),
             nn.BatchNorm2d(1),
             nn.GELU(),
         )       
@@ -152,13 +152,9 @@ class VisionTransformer(_VisionTransformer):
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
-        self.bn1 = nn.BatchNorm2d(2, affine=False)
-        self.bn2 = nn.BatchNorm2d(2, affine=False)
-        self.bn = nn.BatchNorm2d(513, affine=False)
+        self.bn = nn.BatchNorm2d(2, affine=False)
         del self.norm  # remove the original norm
 
-        self.mask_2d = mask_2d
-        self.use_custom_patch = use_custom_patch
         self.target_frame = 1024
 
         self.dis_norm = kwargs['norm_layer'](emb_dim)
@@ -173,7 +169,6 @@ class VisionTransformer(_VisionTransformer):
         trunc_normal_(self.distance_head.weight, std=2e-5)
         trunc_normal_(self.azimuth_head.weight, std=2e-5)
         trunc_normal_(self.elevation_head.weight, std=2e-5)
-
 
     def random_masking_2d(self, x, mask_t_prob, mask_f_prob):
         N, L, D = x.shape  # batch, length, dim
@@ -193,7 +188,7 @@ class VisionTransformer(_VisionTransformer):
 
         # mask F
         #x = x.reshape(N, T, F, D)
-        x = x.permute(0,2,1,3) # N T' F D => N F T' D
+        x = x.permute(0, 2, 1, 3) # N T' F D => N F T' D
         len_keep_F = int(F * (1 - mask_f_prob))
         noise = torch.rand(N, F, device=x.device)  # noise in [0, 1]
         # sort noise for each sample
@@ -235,40 +230,22 @@ class VisionTransformer(_VisionTransformer):
         waveforms = waveforms.reshape(B * C, T)
         # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
-        real = real.reshape(B, C, real.shape[-2], real.shape[-1])
-        imag = imag.reshape(B, C, imag.shape[-2], imag.shape[-1])
 
         log_magnitude = torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
-        log_magnitude = self.bn1(log_magnitude)
-        # log_magnitude = self.mel_norm(log_magnitude) # TODO
-        # log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        log_magnitude = self.bn(log_magnitude)
+        # log_magnitude = self.bn(log_magnitude) * 0.5 # AST paper, not used 
         
-        # complex_x = torch.view_as_complex(torch.stack([real, imag], dim=-1))
-        # ILD = 20 * torch.log10(torch.abs(complex_x[:, 1, :, :]) / torch.abs(complex_x[:, 0, :, :]) + 1e-8)
-        # IPD = torch.atan2(
-        #     torch.imag(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) - 
-        #     torch.real(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :]), 
-        #     torch.real(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) + 
-        #     torch.imag(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :])
-        # )
-        # phase_feats = torch.stack([ILD, IPD], dim=1)
-        phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)
+        # phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)        
 
-        gate = self.gate(log_magnitude)
+        # gate = self.gate(log_magnitude)
+        # x = torch.cat((
+        #     self.mag_stream(log_magnitude) * gate, 
+        #     self.phase_stream(phase_feats) * gate
+        # ), 1)
 
-        x = torch.cat((
-            self.mag_stream(log_magnitude) * gate, 
-            self.phase_stream(phase_feats) * gate
-        ), 1)
-
-        # x = torch.cat([log_magnitude, phase_feats], dim=1)
-
+        x = log_magnitude
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
-
-        # x = x.transpose(1, 3)   # 
-        # x = self.bn(x)
-        # x = x.transpose(1, 3)
 
         if self.training:
             x = x.transpose(-2, -1) # bsz, 4, 1024, 128 --> bsz, 4, 128, 1024
@@ -302,3 +279,12 @@ def vit_base_patch16(**kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
+        # complex_x = torch.view_as_complex(torch.stack([real, imag], dim=-1)).reshape(B, C, -1, 513)
+        # ILD = 20 * torch.log10((torch.abs(complex_x[:, 1, :, :]) + 1e-8) / (torch.abs(complex_x[:, 0, :, :]) + 1e-8))
+        # IPD = torch.atan2(
+        #     torch.imag(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) - 
+        #     torch.real(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :]), 
+        #     torch.real(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) + 
+        #     torch.imag(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :])
+        # )
+        # phase_feats = torch.stack([ILD, IPD], dim=1)
