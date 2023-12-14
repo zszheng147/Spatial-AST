@@ -17,7 +17,7 @@ from torch.nn import functional as F
 
 import torchaudio
 
-from torchlibrosa.stft import STFT
+from torchlibrosa.stft import STFT, LogmelFilterBank
 from timm.models.layers import to_2tuple, trunc_normal_
 
 from vision_transformer import VisionTransformer as _VisionTransformer
@@ -84,7 +84,7 @@ class VisionTransformer(_VisionTransformer):
     def __init__(self, cls_num=1, mask_2d=True, use_custom_patch=False, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
-        in_chans = 1
+        in_chans = 2
         emb_dim = 768
 
         self.doa_tokens = nn.Parameter(torch.zeros(1, 2, emb_dim))
@@ -107,10 +107,10 @@ class VisionTransformer(_VisionTransformer):
             center=True, pad_mode='reflect', freeze_parameters=True
         )
 
-        # self.logmel_extractor = LogmelFilterBank(
-        #     sr=32000, n_fft=1024, n_mels=128, fmin=50, 
-        #     fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
-        # )
+        self.logmel_extractor = LogmelFilterBank(
+            sr=32000, n_fft=1024, n_mels=128, fmin=50, 
+            fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
+        )
 
         # self.gate = nn.Sequential(
         #     conv3x3(2, 4),
@@ -137,17 +137,17 @@ class VisionTransformer(_VisionTransformer):
         #     nn.BatchNorm2d(4),
         #     nn.GELU(),
         # )
-        self.conv_proj = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
-            nn.BatchNorm2d(16),
-            nn.GELU(),
-            conv3x3(16, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-            conv3x3(4, 1),
-            nn.BatchNorm2d(1),
-            nn.GELU(),
-        )       
+        # self.conv_proj = nn.Sequential(
+        #     nn.Conv2d(in_channels=2, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
+        #     nn.BatchNorm2d(16),
+        #     nn.GELU(),
+        #     conv3x3(16, 4),
+        #     nn.BatchNorm2d(4),
+        #     nn.GELU(),
+        #     conv3x3(4, 1),
+        #     nn.BatchNorm2d(1),
+        #     nn.GELU(),
+        # )       
         
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
@@ -231,10 +231,12 @@ class VisionTransformer(_VisionTransformer):
         # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
 
-        log_magnitude = torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
-        log_magnitude = self.bn(log_magnitude)
+        # log_magnitude = torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
+        # log_magnitude = self.bn(log_magnitude)
         # log_magnitude = self.bn(log_magnitude) * 0.5 # AST paper, not used 
-        
+
+        log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        log_mel = self.bn(log_mel)
         # phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)        
 
         # gate = self.gate(log_magnitude)
@@ -243,7 +245,7 @@ class VisionTransformer(_VisionTransformer):
         #     self.phase_stream(phase_feats) * gate
         # ), 1)
 
-        x = log_magnitude
+        x = log_mel
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
 
@@ -253,7 +255,7 @@ class VisionTransformer(_VisionTransformer):
             x = self.timem(x)
             x = x.transpose(-2, -1)
 
-        x = self.conv_proj(x)
+        # x = self.conv_proj(x)
         x = self.patch_embed(x)
         x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
 
