@@ -157,7 +157,7 @@ class MultichannelDataset(Dataset):
         sensor_position = np.array([float(i) for i in reverb_item['sensor_position'].split(',')])
         source_position = np.array([float(i) for i in reverb_item['source_position'].split(',')])
         distance = np.linalg.norm(sensor_position - source_position)
-        distance = round(distance * 2) # 11 classes
+        distance = round(distance * 2) # 21 classes
         
         #NOTE: pay attention to the coordinate system
         dx = source_position[0] - sensor_position[0] # LEFT-RIGHT

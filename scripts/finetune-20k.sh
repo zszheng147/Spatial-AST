@@ -17,8 +17,8 @@ reverb_type=binaural
 reverb_train_json=/home/zhisheng/data/SpatialAudio/reverb/mp3d/train_reverberation.json
 reverb_val_json=/home/zhisheng/data/SpatialAudio/reverb/mp3d/eval_reverberation.json
 
-output_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-test
-log_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-test
+output_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-real-DP
+log_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-real-DP
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \

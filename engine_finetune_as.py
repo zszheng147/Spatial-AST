@@ -227,8 +227,8 @@ def distance_between_spherical_coordinates_rad(az1, ele1, az2, ele2):
     :return: angular distance in degrees
     """
     #NOTE: [0, 180] --> [0, +180]; [+180, +360] --> [-180, 0]
-    az1 = az1 - 360 if az1 > 180 else az1
-    az2 = az2 - 360 if az2 > 180 else az2
+    az1[az1 > 180] -= 360
+    az2[az2 > 180] -= 360
     az1 = az1 * np.pi / 180.
     az2 = az2 * np.pi / 180.
     ele1 = (ele1 - 90) * np.pi / 180.

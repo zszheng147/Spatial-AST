@@ -105,22 +105,21 @@ class VisionTransformer(_VisionTransformer):
         )
 
         self.gate = nn.Sequential(
-            conv3x3(2, 4),
+            conv3x3(2, 4), 
             nn.BatchNorm2d(4),
             nn.GELU(),
-            conv3x3(4, 4),
+            conv3x3(4, 4), 
             nn.BatchNorm2d(4),
-            nn.GELU(),
-        )
+            nn.Sigmoid(),
+        )   
 
         self.mag_stream = nn.Sequential(
-            conv1x1(2, 4),
+            conv1x1(2, 4), 
+            nn.Tanh(),
+            conv1x1(4, 4), 
             nn.BatchNorm2d(4),
             nn.GELU(),
-            conv1x1(4, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-        )
+        )   
 
         self.phase_stream = nn.Sequential(
             conv1x1(2, 4),
@@ -134,14 +133,14 @@ class VisionTransformer(_VisionTransformer):
             nn.Conv2d(in_channels=8, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
             nn.BatchNorm2d(16),
             nn.GELU(),
-            conv1x1(16, 4),
+            conv3x3(16, 4),
             nn.BatchNorm2d(4),
             nn.GELU(),
-            conv1x1(4, 1),
+            conv3x3(4, 1),
             nn.BatchNorm2d(1),
             nn.GELU(),
         )       
-        
+
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
@@ -154,7 +153,7 @@ class VisionTransformer(_VisionTransformer):
         self.doa_norm = kwargs['norm_layer'](emb_dim)
         self.fc_norm = kwargs['norm_layer'](emb_dim)
 
-        self.distance_head = nn.Linear(emb_dim, 11) # [0:5:0.5], 11 classes 
+        self.distance_head = nn.Linear(emb_dim, 21) # [0:10:0.5], 21 classes 
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
 
