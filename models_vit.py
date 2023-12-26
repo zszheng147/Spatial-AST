@@ -81,18 +81,15 @@ class PatchEmbed_new(nn.Module):
 class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
-    def __init__(self, cls_num=1, mask_2d=True, use_custom_patch=False, **kwargs):
+    def __init__(self, num_cls_tokens=3, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 1
         emb_dim = 768
 
-        self.doa_tokens = nn.Parameter(torch.zeros(1, 2, emb_dim))
-        torch.nn.init.normal_(self.doa_tokens, std=.02)
-
         del self.cls_token
-        self.cls_num = cls_num
-        self.cls_tokens = nn.Parameter(torch.zeros(1, cls_num, emb_dim))
+        self.num_cls_tokens = num_cls_tokens
+        self.cls_tokens = nn.Parameter(torch.zeros(1, num_cls_tokens, emb_dim))
         torch.nn.init.normal_(self.cls_tokens, std=.02)
 
         self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
@@ -107,44 +104,40 @@ class VisionTransformer(_VisionTransformer):
             center=True, pad_mode='reflect', freeze_parameters=True
         )
 
-        # self.logmel_extractor = LogmelFilterBank(
-        #     sr=32000, n_fft=1024, n_mels=128, fmin=50, 
-        #     fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
-        # )
-
-        # self.gate = nn.Sequential(
-        #     conv3x3(2, 4),
-        #     nn.BatchNorm2d(4),
-        #     nn.GELU(),
-        #     conv3x3(4, 4),
-        #     nn.BatchNorm2d(4),
-        #     nn.GELU(),
-        # )
-
-        # self.mag_stream = nn.Sequential(
-        #     conv1x1(2, 4),
-        #     nn.BatchNorm2d(4),
-        #     nn.GELU(),
-        #     conv1x1(4, 4),
-        #     nn.BatchNorm2d(4),
-        #     nn.GELU(),
-        # )
-
-        # self.phase_stream = nn.Sequential(
-        #     conv1x1(2, 4),
-        #     SinCosConcat(),
-        #     conv1x1(8, 4),
-        #     nn.BatchNorm2d(4),
-        #     nn.GELU(),
-        # )
-        self.conv_proj = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
-            nn.BatchNorm2d(16),
-            nn.GELU(),
-            conv3x3(16, 4),
+        self.gate = nn.Sequential(
+            conv3x3(2, 4),
             nn.BatchNorm2d(4),
             nn.GELU(),
-            conv3x3(4, 1),
+            conv3x3(4, 4),
+            nn.BatchNorm2d(4),
+            nn.GELU(),
+        )
+
+        self.mag_stream = nn.Sequential(
+            conv1x1(2, 4),
+            nn.BatchNorm2d(4),
+            nn.GELU(),
+            conv1x1(4, 4),
+            nn.BatchNorm2d(4),
+            nn.GELU(),
+        )
+
+        self.phase_stream = nn.Sequential(
+            conv1x1(2, 4),
+            SinCosConcat(),
+            conv1x1(8, 4),
+            nn.BatchNorm2d(4),
+            nn.GELU(),
+        )
+
+        self.conv_proj = nn.Sequential(
+            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
+            nn.BatchNorm2d(16),
+            nn.GELU(),
+            conv1x1(16, 4),
+            nn.BatchNorm2d(4),
+            nn.GELU(),
+            conv1x1(4, 1),
             nn.BatchNorm2d(1),
             nn.GELU(),
         )       
@@ -161,7 +154,7 @@ class VisionTransformer(_VisionTransformer):
         self.doa_norm = kwargs['norm_layer'](emb_dim)
         self.fc_norm = kwargs['norm_layer'](emb_dim)
 
-        self.distance_head = nn.Linear(emb_dim, 11)
+        self.distance_head = nn.Linear(emb_dim, 11) # [0:5:0.5], 11 classes 
         self.azimuth_head = nn.Linear(emb_dim, 360)
         self.elevation_head = nn.Linear(emb_dim, 180)
 
@@ -213,8 +206,7 @@ class VisionTransformer(_VisionTransformer):
 
         cls_tokens = self.cls_tokens
         cls_tokens = cls_tokens.expand(B, -1, -1)
-        doa_tokens = self.doa_tokens.expand(B, -1, -1)
-        x = torch.cat((doa_tokens, cls_tokens, x), dim=1)   # bsz, 512 + 2 + 10, 768 
+        x = torch.cat([cls_tokens, x], dim=1)   # bsz, 512 + 2 + 10, 768 
         x = self.pos_drop(x)
         
         for blk in self.blocks:
@@ -231,21 +223,23 @@ class VisionTransformer(_VisionTransformer):
         # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
 
-        log_magnitude = torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
+        log_magnitude = 10 * torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
         log_magnitude = self.bn(log_magnitude)
         # log_magnitude = self.bn(log_magnitude) * 0.5 # AST paper, not used 
 
         # log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
         # log_mel = self.bn(log_mel)
-        # phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)        
+        phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)        
 
-        # gate = self.gate(log_magnitude)
-        # x = torch.cat((
-        #     self.mag_stream(log_magnitude) * gate, 
-        #     self.phase_stream(phase_feats) * gate
-        # ), 1)
+        gate = self.gate(log_magnitude)
+        x = torch.cat((
+            self.mag_stream(log_magnitude) * gate, 
+            self.phase_stream(phase_feats) * gate
+        ), 1)
 
-        x = log_magnitude
+        # x = log_magnitude
+        # x = torch.cat([log_magnitude, phase_feats], dim=1)
+
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
 
@@ -261,7 +255,7 @@ class VisionTransformer(_VisionTransformer):
 
         dis_token = x[:, 0]
         doa_token = x[:, 1]
-        cls_tokens = x[:, 2:2+self.cls_num].mean(dim=1)
+        cls_tokens = x[:, 2]
 
         dis_token = self.dis_norm(dis_token)
         doa_token = self.doa_norm(doa_token)

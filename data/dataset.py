@@ -96,48 +96,30 @@ class DistributedWeightedSampler(Sampler):
     def set_epoch(self, epoch):
         self.epoch = epoch
 
-
 def make_index_dict(label_csv):
     index_lookup = {}
     with open(label_csv, 'r') as f:
         csv_reader = csv.DictReader(f)
         line_count = 0
         for row in csv_reader:
-            index_lookup[row['mid']] = row['index']
+            # index_lookup[row['mid']] = row['index']
+            index_lookup[row['mid']] = line_count #! debug to check
             line_count += 1
     return index_lookup
-
-def make_name_dict(label_csv):
-    name_lookup = {}
-    with open(label_csv, 'r') as f:
-        csv_reader = csv.DictReader(f)
-        line_count = 0
-        for row in csv_reader:
-            name_lookup[row['index']] = row['display_name']
-            line_count += 1
-    return name_lookup
-
-def lookup_list(index_list, label_csv):
-    label_list = []
-    table = make_name_dict(label_csv)
-    for item in index_list:
-        label_list.append(table[item])
-    return label_list
 
 class MultichannelDataset(Dataset):
     _ext_reverb = ".npy"
     _ext_audio = ".wav"
-    audio_path_root = "/mnt/lustre/sjtu/shared/data/raa/AudioSet"
-    reverb_path_root = "/data/shared/zsz01/reverb/"
+    audio_path_root = "/home/zhisheng/data/AudioSet"
+    reverb_path_root = "/home/zhisheng/data/SpatialAudio/reverb/mp3d"
 
     def __init__(
             self, 
             audio_json, audio_conf,
             reverb_json, reverb_type,  
             label_csv=None,
-            use_fbank=False, 
-            fbank_dir=None, 
             roll_mag_aug=False, 
+            noramlize=True,
             mode='train'
         ):
 
@@ -145,37 +127,23 @@ class MultichannelDataset(Dataset):
 
         self.reverb = json.load(open(reverb_json, 'r'))['data']
         self.reverb_type = reverb_type
-        self.channel_num = 2 if reverb_type == 'BINAURAL' else 9 if reverb_type == 'AMBISONICS' else 1
+        self.channel_num = 2 if reverb_type == 'binaural' else 9 if reverb_type == 'ambisonics' else 1
         
-        self.use_fbank = use_fbank
-        self.fbank_dir = fbank_dir
-
         self.audio_conf = audio_conf
         print('---------------the {:s} dataloader---------------'.format(self.audio_conf.get('mode')))
         if 'multilabel' in self.audio_conf.keys():
             self.multilabel = self.audio_conf['multilabel']
         else:
             self.multilabel = False
-        self.melbins = self.audio_conf.get('num_mel_bins')
-        self.freqm = self.audio_conf.get('freqm')
-        self.timem = self.audio_conf.get('timem')
         self.mixup = self.audio_conf.get('mixup')
         self.dataset = self.audio_conf.get('dataset')
-        self.norm_mean = self.audio_conf.get('mean')
-        self.norm_std = self.audio_conf.get('std')
-        self.noise = self.audio_conf.get('noise')
-        
         self.index_dict = make_index_dict(label_csv)
         self.label_num = len(self.index_dict)
         self.roll_mag_aug = roll_mag_aug
-
+        self.noramlize = noramlize
         self.mode = mode
         print(f'multilabel: {self.multilabel}')
-        print('using following mask: {:d} freq, {:d} time'.format(self.audio_conf.get('freqm'), self.audio_conf.get('timem')))
         print('using mix-up with rate {:f}'.format(self.mixup))
-        if self.noise == True:
-            print('now use noise augmentation')
-        print('Dataset: {}, mean {:.3f} and std {:.3f}'.format(self.dataset, self.norm_mean, self.norm_std))
         print(f'number of classes: {self.label_num}')
         print(f'size of dataset: {self.__len__()}')
 
@@ -184,23 +152,27 @@ class MultichannelDataset(Dataset):
         mag = np.random.beta(10, 10) + 0.5
         return torch.roll(waveform, idx) * mag
 
-    def _spatial_targets_discretize(self, reverb_item):
-        distance = reverb_item['distance'] # meter: [0, 1, 2, 3, ..., 10]
-        direction = reverb_item['direction']
-        azimuth = reverb_item['azimuth_degrees'] # (-180, 180) = [-179~179]
-        elevation = reverb_item['elevation_degrees'] # (-90, 90) = [-89~89]
+    def fetch_spatial_targets(self, reverb_item):
+        #! TODO, check this 
+        sensor_position = np.array([float(i) for i in reverb_item['sensor_position'].split(',')])
+        source_position = np.array([float(i) for i in reverb_item['source_position'].split(',')])
+        distance = np.linalg.norm(sensor_position - source_position)
+        distance = round(distance * 2) # 11 classes
+        
+        #NOTE: pay attention to the coordinate system
+        dx = source_position[0] - sensor_position[0] # LEFT-RIGHT
+        dy = source_position[1] - sensor_position[1] # UP-DOWN
+        dz = source_position[2] - sensor_position[2] # FRONT-BACK
 
-        distance = distance # 11 classes
-        azimuth = azimuth + 180
-        elevation = elevation + 90
-        # azimuth = (round(azimuth / 5.0) * 5 + 180) / 5.0 % 72
-        # elevation = (round(elevation / 5.0) * 5 + 90) / 5.0 % 36
+        azimuth_degrees = math.degrees(math.atan2(-dz, dx)) # degree
+        azimuth_degrees = (round(azimuth_degrees) + 360) % 360 # [-180, -0] -- > [+180, +360]; [0, 180] --> [0, +180]
+        elevation_degrees = math.degrees(math.atan(dy / math.sqrt(dx**2 + dz**2))) # degree
+        elevation_degrees = (round(elevation_degrees) + 90) % 180 # [-90, 90] --> [0, 179], need reverse
 
         spaital_targets = { 
             "distance": distance,         
-            "direction": direction,
-            "azimuth": azimuth,
-            "elevation": elevation        
+            "azimuth": azimuth_degrees,
+            "elevation": elevation_degrees        
         }   
         return spaital_targets
 
@@ -214,10 +186,10 @@ class MultichannelDataset(Dataset):
         # do mix-up for this sample (controlled by the given mixup rate)
         if random.random() < self.mixup: # for audio_exp, when using mixup, assume multilabel
             reverb_item = random.choice(self.reverb)
-            spaital_targets = self._spatial_targets_discretize(reverb_item)
-
-            house_id, prefix  = reverb_item['reverberation'].split('-', maxsplit=1)
-            reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, house_id, prefix + self._ext_reverb)
+            
+            spaital_targets = self.fetch_spatial_targets(reverb_item)
+            reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, reverb_item['fname'])
+            
             reverb = torch.from_numpy(np.load(reverb_path)).float()
             reverb_padding = 32000 * 2 - reverb.shape[1]
             if reverb_padding > 0:
@@ -232,23 +204,34 @@ class MultichannelDataset(Dataset):
             
             audio_path = os.path.join(self.audio_path_root, datum['folder'], datum['id'] + self._ext_audio)
             mix_audio_path = os.path.join(self.audio_path_root, mix_datum['folder'], mix_datum['id'] + self._ext_audio)
+
             if 'unbalanced' in audio_path:
+                if self.noramlize:
+                    pass #TODO: check this
                 h5_path, fname = audio_path.rsplit('/', 1)
                 waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
                 sr = 32000
             else:
+                if self.noramlize:
+                    audio_path = audio_path.replace(datum['folder'], f"normalized_{datum['folder']}")
                 waveform, sr = sf.read(audio_path)
+
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]  
             if sr != 32000:
                 waveform = signal.resample_poly(waveform, 32000, sr)
 
             if 'unbalanced' in mix_audio_path:
+                if self.noramlize:
+                    pass #TODO: check this
                 h5_path, fname = mix_audio_path.rsplit('/', 1)
                 mix_waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
                 sr = 32000
             else:
+                if self.noramlize:
+                    mix_audio_path = mix_audio_path.replace(mix_datum['folder'], f"normalized_{mix_datum['folder']}")
                 mix_waveform, sr = sf.read(mix_audio_path)
+
             if len(mix_waveform.shape) > 1: 
                 mix_waveform = mix_waveform[:, 0]  
             if sr != 32000:
@@ -288,13 +271,11 @@ class MultichannelDataset(Dataset):
         
         else:
             datum = self.data[index]
-            reverb_item = random.choice(self.reverb)
-
             label_indices = np.zeros(self.label_num)
-            
             audio_path = os.path.join(self.audio_path_root, datum['folder'], datum['id'] + self._ext_audio)
-            house_id, prefix  = reverb_item['reverberation'].split('-', maxsplit=1)
-            reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, house_id, prefix + self._ext_reverb)
+                  
+            reverb_item = random.choice(self.reverb)
+            reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, reverb_item['fname'])
             reverb = torch.from_numpy(np.load(reverb_path)).float()
 
             reverb_padding = 32000 * 2 - reverb.shape[1]
@@ -304,10 +285,14 @@ class MultichannelDataset(Dataset):
                 reverb = reverb[:, :32000 * 2]
 
             if 'unbalanced' in audio_path:
+                if self.noramlize:
+                    pass #TODO: check this
                 h5_path, fname = audio_path.rsplit('/', 1)
                 waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
                 sr = 32000
             else:
+                if self.noramlize:
+                    audio_path = audio_path.replace(datum['folder'], f"normalized_{datum['folder']}")
                 waveform, sr = sf.read(audio_path)
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]   
@@ -329,7 +314,7 @@ class MultichannelDataset(Dataset):
                 label_indices[int(self.index_dict[label_str])] = 1.0
             label_indices = torch.FloatTensor(label_indices)
 
-            spaital_targets = self._spatial_targets_discretize(reverb_item)
+            spaital_targets = self.fetch_spatial_targets(reverb_item)
 
         return waveform, reverb, label_indices, spaital_targets, audio_path, reverb_path
 

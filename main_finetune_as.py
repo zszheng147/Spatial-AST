@@ -144,16 +144,14 @@ def get_args_parser():
     parser.add_argument('--audio_exp', action='store_false', default=True, help='audio exp')
     parser.add_argument("--audioset_train", type=str, default='/path/to/train', help="training data json")
     parser.add_argument("--audioset_eval", type=str, default='/path/to/eval', help="validation data json")
-    parser.add_argument("--label_csv", type=str, default='/saltpool0/data/zhisheng/audioset/class_labels_indices.csv', help="csv with class labels")
+    parser.add_argument("--label_csv", type=str, default='', help="csv with class labels")
     parser.add_argument("--weight_csv", type=str, default='/path/to/weight', help="weight file")
     
     parser.add_argument('--freqm', help='frequency mask max length', type=int, default=192)
     parser.add_argument('--timem', help='time mask max length', type=int, default=48)
     #parser.add_argument("--mixup", type=float, default=0, help="how many (0-1) samples need to be mixup during training")
     parser.add_argument("--dataset", type=str, default="audioset", help="the dataset used", choices=["audioset", "esc50", "speechcommands", "k400"])
-    parser.add_argument("--use_fbank", type=bool, default=False)
     parser.add_argument("--use_soft", type=bool, default=False)
-    parser.add_argument("--fbank_dir", type=str, default="/path/to/fbank", help="fbank dir") 
 
     #parser.add_argument("--distributed", type=bool, default=True)
     parser.add_argument('--first_eval_ep', default=0, type=int, help='do eval after first_eval_ep')
@@ -171,7 +169,7 @@ def get_args_parser():
     parser.add_argument('--replace_with_mae', action='store_true', default=False, help='replace_with_mae')
     parser.add_argument('--load_imgnet_pt', action='store_true', default=False, help='when img_pt_ckpt, if load_imgnet_pt, use img_pt_ckpt to initialize audio branch, if not, keep audio branch random')
     
-    parser.add_argument('--reverb_type', type=str, default='BINAURAL', choices=['BINAURAL', 'MONO'], help='reverb type')
+    parser.add_argument('--reverb_type', type=str, default='binaural', choices=['binaural', 'mono'], help='reverb type')
     parser.add_argument('--reverb_train_json', type=str, default='/path/to/reverberation.json', help='reverb train json')
     parser.add_argument('--reverb_val_json', type=str, default='/path/to/reverberation.json', help='reverb val json')
 
@@ -267,16 +265,14 @@ def main(args):
             args.audioset_train, audio_conf=audio_conf_train, 
             reverb_json=args.reverb_train_json, reverb_type=args.reverb_type, 
             label_csv=args.label_csv,
-            use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
-            roll_mag_aug=args.roll_mag_aug, mode='train'
+            roll_mag_aug=args.roll_mag_aug, noramlize=True, mode='train'
         )
         
         dataset_val = MultichannelDataset(
             args.audioset_eval, audio_conf=audio_conf_val, 
             reverb_json=args.reverb_val_json, reverb_type=args.reverb_type, 
             label_csv=args.label_csv,
-            use_fbank=args.use_fbank, fbank_dir=args.fbank_dir, 
-            roll_mag_aug=False, mode='eval'
+            roll_mag_aug=False, noramlize=True, mode='eval'
         )
 
     #args.distributed:
@@ -353,14 +349,13 @@ def main(args):
         mixup_fn = Mixup(
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=args.nb_classes)
+            label_smoothing=args.smoothing, num_classes=args.nb_classes
+        )
     
     model = models_vit.__dict__[args.model](
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
-        cls_num=1,
-        mask_2d=args.mask_2d,
-        use_custom_patch=args.use_custom_patch,
+        num_cls_tokens=3,
     )
 
     #if args.finetune and not args.eval:
@@ -454,7 +449,7 @@ def main(args):
                 log_writer=log_writer,
                 args=args
             )
-        if args.output_dir and (epoch % 2 == 0 or epoch == args.epochs - 1):
+        if args.output_dir and (epoch % 20 == 0 or epoch == args.epochs - 1):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)

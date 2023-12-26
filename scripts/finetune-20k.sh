@@ -1,28 +1,28 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,1
 
 blr=1e-3
 mask_t_prob=0.25
 mask_f_prob=0.25
 
 dataset=audioset
-ckpt=/mnt/lustre/sjtu/home/zsz01/AudioMAE-spatial/outputs/finetune-2m-round2/checkpoint-23-best.pth
+ckpt=/home/zhisheng/models/audiomae/pretrained.pth
 
-audioset_label=/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv
-audioset_train_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/balanced_no_missing.json
-audioset_eval_json=/mnt/lustre/sjtu/home/zsz01/data/audioset/eval_no_missing.json
+audioset_label=/saltpool0/data/zhisheng/audioset/class_whitelist_encoder.csv
+audioset_train_json=/saltpool0/data/zhisheng/audioset/balanced_no_missing.json
+audioset_eval_json=/saltpool0/data/zhisheng/audioset/eval_no_missing.json
 
-reverb_type=BINAURAL
-reverb_train_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/train_reverberation.json
-reverb_val_json=/mnt/lustre/sjtu/home/zsz01/remote/reverb/eval_reverberation.json
+reverb_type=binaural
+reverb_train_json=/home/zhisheng/data/SpatialAudio/reverb/mp3d/train_reverberation.json
+reverb_val_json=/home/zhisheng/data/SpatialAudio/reverb/mp3d/eval_reverberation.json
 
-output_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-20k
-log_dir=/mnt/lustre/sjtu/home/zsz01/AudioMAE-fusion/outputs/finetune-20k
+output_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-test
+log_dir=/home/zhisheng/AudioMAE-fusion/outputs/finetune-20k-test
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=4 --use_env main_finetune_as.py \
+    --nproc_per_node=2 --use_env main_finetune_as.py \
 	--log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
@@ -37,7 +37,7 @@ python -m torch.distributed.launch \
     --blr $blr \
     --dist_eval \
     --batch_size 64 \
-    --num_workers 4 \
+    --num_workers 0 \
     --roll_mag_aug \
     --mixup 0.5 \
     --mask_t_prob $mask_t_prob \
@@ -45,4 +45,5 @@ python -m torch.distributed.launch \
     --first_eval_ep 0 \
     --epochs 60 \
     --warmup_epochs 4 \
-    --mask_2d
+    --mask_2d \
+    --nb_classes 355 \

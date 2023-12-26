@@ -12,13 +12,14 @@ def make_index_dict(label_csv):
         csv_reader = csv.DictReader(f)
         line_count = 0
         for row in csv_reader:
-            index_lookup[row['mid']] = row['index']
+            # index_lookup[row['mid']] = row['index']
+            index_lookup[row['mid']] = line_count 
             line_count += 1
     return index_lookup
 
 def gen_weight(json_file, label_file, output_file):
     index_dict = make_index_dict(label_file)
-    label_count = np.zeros(527)
+    label_count = np.zeros(355)
 
     with open(json_file, 'r', encoding='utf8')as fp:
         data = json.load(fp)
@@ -45,9 +46,9 @@ def gen_weight(json_file, label_file, output_file):
 
 if __name__ == '__main__':
     #args = parser.parse_args()
-    json_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/balanced_no_missing.json'
-    label_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/class_labels_indices.csv'
-    output_file='/mnt/lustre/sjtu/home/zsz01/data/audioset/distributed/balanced.csv'
+    json_file='/saltpool0/data/zhisheng/audioset/balanced_no_missing.json'
+    label_file='/saltpool0/data/zhisheng/audioset/class_whitelist_encoder.csv'
+    output_file='/saltpool0/data/zhisheng/audioset/distributed/balanced.csv'
     gen_weight(json_file, label_file, output_file)
 
 

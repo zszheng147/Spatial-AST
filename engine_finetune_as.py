@@ -89,8 +89,8 @@ def train_one_epoch(
         #     loss3 = torch.tensor(0.).to(device)
         #     loss4 = torch.tensor(0.).to(device)
         
-        # loss = loss1
-        loss = 125 * loss1 + 0.5 * loss2 + 0.75 * (loss3 + loss4)
+        loss = loss1
+        # loss = 125 * loss1 + 0.5 * loss2 + 0.75 * (loss3 + loss4)
         # loss = mtl_loss_fn([loss1, loss2, loss3, loss4])
             
         loss_value = loss.item()
@@ -177,10 +177,10 @@ def evaluate(data_loader, model, device, dist_eval=False):
     outputs = torch.cat(outputs).cpu().numpy()
     targets = torch.cat(targets).cpu().numpy()
     vids = [j for sub in vids for j in sub]
-    np.save('inf_output.npy', {'vids':vids, 'embs_527':outputs, 'targets':targets})
+    # np.save('inf_output.npy', {'vids':vids, 'embs_527':outputs, 'targets':targets})
     stats = calculate_stats(outputs, targets)
 
-    AP = [stat['AP'] for stat in stats]
+    # AP = [stat['AP'] for stat in stats]
     mAP = np.mean([stat['AP'] for stat in stats])
     print("mAP: {:.6f}".format(mAP))
 
@@ -191,6 +191,7 @@ def evaluate(data_loader, model, device, dist_eval=False):
     total_samples = len(all_distances)
     spatial_outputs = []
 
+    #! TODO: check this
     distance_correct = np.sum([1 for truth, pred in zip(all_distances, all_distance_preds) if abs(truth - pred) <= 1])
     spatial_outputs.append(distance_correct)
 
@@ -219,8 +220,17 @@ def evaluate(data_loader, model, device, dist_eval=False):
 
 
 def distance_between_spherical_coordinates_rad(az1, ele1, az2, ele2):
-    az1 = (az1 - 180) * np.pi / 180.
-    az2 = (az2 - 180) * np.pi / 180.
+    """
+    Angular distance between two spherical coordinates
+    MORE: https://en.wikipedia.org/wiki/Great-circle_distance
+
+    :return: angular distance in degrees
+    """
+    #NOTE: [0, 180] --> [0, +180]; [+180, +360] --> [-180, 0]
+    az1 = az1 - 360 if az1 > 180 else az1
+    az2 = az2 - 360 if az2 > 180 else az2
+    az1 = az1 * np.pi / 180.
+    az2 = az2 * np.pi / 180.
     ele1 = (ele1 - 90) * np.pi / 180.
     ele2 = (ele2 - 90) * np.pi / 180.
 
