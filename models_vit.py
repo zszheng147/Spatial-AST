@@ -22,24 +22,19 @@ from timm.models.layers import to_2tuple, trunc_normal_
 
 from vision_transformer import VisionTransformer as _VisionTransformer
 
-class AutomaticWeightedLoss(nn.Module):
-    def __init__(self, num):
-        super().__init__()
-        params = torch.ones(num, requires_grad=False)
-        self.params = torch.nn.Parameter(params)
+def normalize_audio(audio_data, target_dBFS=-14.0):
+    rms = torch.sqrt(torch.mean(audio_data**2, dim=2, keepdim=True))
 
-    def forward(self, x):
-        loss_sum = 0
-        for i, loss in enumerate(x):
-            loss_sum += 0.5 / (self.params[i] ** 2) * loss + torch.log(1 + self.params[i] ** 2)
-        return loss_sum
-    
-class SinCosConcat(nn.Module):
-    def __init__(self):
-        super().__init__()
+    silent_indices = rms == 0
 
-    def forward(self, x, dim=1):
-        return torch.cat((torch.sin(x), torch.cos(x)), dim=dim)
+    current_dBFS = 20 * torch.log10(rms)  # Convert RMS to dBFS
+    gain_dB = target_dBFS - current_dBFS  # Calculate the required gain in dB
+    gain_linear = 10 ** (gain_dB / 20)  # Convert gain from dB to linear scale
+
+    gain_linear[silent_indices] = 1.0
+    normalized_audio = audio_data * gain_linear
+
+    return normalized_audio
 
 def conv3x3(in_channels, out_channels, stride=1):
     "3x3 convolution with padding"
@@ -81,7 +76,7 @@ class PatchEmbed_new(nn.Module):
 class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
-    def __init__(self, num_cls_tokens=3, **kwargs):
+    def __init__(self, num_cls_tokens=3, audio_normalize=True, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 1
@@ -92,7 +87,10 @@ class VisionTransformer(_VisionTransformer):
         self.cls_tokens = nn.Parameter(torch.zeros(1, num_cls_tokens, emb_dim))
         torch.nn.init.normal_(self.cls_tokens, std=.02)
 
-        self.patch_embed = PatchEmbed_new(img_size=img_size, patch_size=(16,16), in_chans=in_chans, embed_dim=emb_dim, stride=16) # no overlap. stride=img_size=16
+        self.patch_embed = PatchEmbed_new(
+            img_size=img_size, patch_size=(16,16), 
+            in_chans=in_chans, embed_dim=emb_dim, stride=16
+        ) # no overlap. stride=img_size=16
         w = self.patch_embed.proj.weight.data
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
@@ -103,47 +101,21 @@ class VisionTransformer(_VisionTransformer):
             n_fft=1024, hop_length=320, win_length=1024, window='hann', 
             center=True, pad_mode='reflect', freeze_parameters=True
         )
-
-        self.gate = nn.Sequential(
-            conv3x3(2, 4), 
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-            conv3x3(4, 4), 
-            nn.BatchNorm2d(4),
-            nn.Sigmoid(),
-        )   
-
-        self.mag_stream = nn.Sequential(
-            conv1x1(2, 4), 
-            nn.Tanh(),
-            conv1x1(4, 4), 
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-        )   
-
-        self.phase_stream = nn.Sequential(
-            conv1x1(2, 4),
-            SinCosConcat(),
-            conv1x1(8, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
+        self.logmel_extractor = LogmelFilterBank(
+            sr=32000, n_fft=1024, n_mels=128, fmin=50, 
+            fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True
         )
-
-        self.conv_proj = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=(1, 2), stride=(1, 4), padding=(0, 0)),
-            nn.BatchNorm2d(16),
-            nn.GELU(),
-            conv3x3(16, 4),
-            nn.BatchNorm2d(4),
-            nn.GELU(),
-            conv3x3(4, 1),
+        
+        self.conv_downsample = nn.Sequential(
+            conv3x3(2, 1), 
             nn.BatchNorm2d(1),
             nn.GELU(),
-        )       
+        )
 
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
+        self.audio_normalize = audio_normalize
         self.bn = nn.BatchNorm2d(2, affine=False)
         del self.norm  # remove the original norm
 
@@ -196,7 +168,7 @@ class VisionTransformer(_VisionTransformer):
         return x_masked, None, None
 
     def forward_features_mask(self, x, mask_t_prob, mask_f_prob):
-        B = x.shape[0] #4,1,1024,128
+        B = x.shape[0] #bsz, 512, 768 (unmasked)
 
         x = x + self.pos_embed[:, 1:, :]
 
@@ -215,40 +187,31 @@ class VisionTransformer(_VisionTransformer):
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
+        if self.audio_normalize:
+            waveforms = normalize_audio(waveforms)
         waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
         B, C, T = waveforms.shape
 
         waveforms = waveforms.reshape(B * C, T)
-        # bsz* channels, 1024, 513
         real, imag = self.spectrogram_extractor(waveforms) 
 
-        log_magnitude = 10 * torch.log10(torch.sqrt(real**2 + imag**2) + 1e-8).reshape(B, C, -1, 513)
-        log_magnitude = self.bn(log_magnitude)
-        # log_magnitude = self.bn(log_magnitude) * 0.5 # AST paper, not used 
-
-        # log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
-        # log_mel = self.bn(log_mel)
-        phase_feats = torch.atan2(imag, real).reshape(B, C, -1, 513)        
-
-        gate = self.gate(log_magnitude)
-        x = torch.cat((
-            self.mag_stream(log_magnitude) * gate, 
-            self.phase_stream(phase_feats) * gate
-        ), 1)
-
-        # x = log_magnitude
-        # x = torch.cat([log_magnitude, phase_feats], dim=1)
-
+        log_mel = self.logmel_extractor(torch.sqrt(real**2 + imag**2)).reshape(B, C, -1, 128)
+        log_mel = self.bn(log_mel)
+        x = log_mel
+        
+        # IPD = torch.atan2(imag[1::2], real[1::2]) - torch.atan2(imag[::2], real[::2])
+        # x = torch.cat([log_mel, torch.matmul(IPD, self.logmel_extractor.melW)], dim=1)
+        
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
-
+    
+        x = self.conv_downsample(x)
         if self.training:
             x = x.transpose(-2, -1) # bsz, 4, 1024, 128 --> bsz, 4, 128, 1024
             x = self.freqm(x)
             x = self.timem(x)
             x = x.transpose(-2, -1)
 
-        x = self.conv_proj(x)
         x = self.patch_embed(x)
         x = self.forward_features_mask(x, mask_t_prob=mask_t_prob, mask_f_prob=mask_f_prob)
 
@@ -274,12 +237,3 @@ def vit_base_patch16(**kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
-        # complex_x = torch.view_as_complex(torch.stack([real, imag], dim=-1)).reshape(B, C, -1, 513)
-        # ILD = 20 * torch.log10((torch.abs(complex_x[:, 1, :, :]) + 1e-8) / (torch.abs(complex_x[:, 0, :, :]) + 1e-8))
-        # IPD = torch.atan2(
-        #     torch.imag(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) - 
-        #     torch.real(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :]), 
-        #     torch.real(complex_x[:, 1, :, :]) * torch.real(complex_x[:, 0, :, :]) + 
-        #     torch.imag(complex_x[:, 1, :, :]) * torch.imag(complex_x[:, 0, :, :])
-        # )
-        # phase_feats = torch.stack([ILD, IPD], dim=1)

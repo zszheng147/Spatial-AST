@@ -26,7 +26,6 @@ from utils.stat import calculate_stats, concat_all_gather
 
 def train_one_epoch(
         model: torch.nn.Module, criterion: torch.nn.Module,
-        mtl_loss_fn: torch.nn.Module,
         data_loader: Iterable, optimizer: torch.optim.Optimizer,
         device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
         mixup_fn: Optional[Mixup] = None, log_writer=None,
@@ -90,8 +89,7 @@ def train_one_epoch(
         #     loss4 = torch.tensor(0.).to(device)
         
         loss = loss1
-        # loss = 125 * loss1 + 0.5 * loss2 + 0.75 * (loss3 + loss4)
-        # loss = mtl_loss_fn([loss1, loss2, loss3, loss4])
+        # loss = 1200 * loss1 + 1 * loss2 + 3 * (loss3 + loss4)
             
         loss_value = loss.item()
 
@@ -129,7 +127,6 @@ def train_one_epoch(
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    print(f"Loss weight: {mtl_loss_fn.params}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()

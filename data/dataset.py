@@ -103,23 +103,22 @@ def make_index_dict(label_csv):
         line_count = 0
         for row in csv_reader:
             # index_lookup[row['mid']] = row['index']
-            index_lookup[row['mid']] = line_count #! debug to check
+            index_lookup[row['mid']] = line_count 
             line_count += 1
     return index_lookup
 
 class MultichannelDataset(Dataset):
     _ext_reverb = ".npy"
     _ext_audio = ".wav"
-    audio_path_root = "/home/zhisheng/data/AudioSet"
-    reverb_path_root = "/home/zhisheng/data/SpatialAudio/reverb/mp3d"
-
+    audio_path_root = "/data/shared/AudioSet"
+    reverb_path_root = "/data/shared/zsz01/SpatialAudio/reverb/mp3d"
+    
     def __init__(
             self, 
             audio_json, audio_conf,
             reverb_json, reverb_type,  
             label_csv=None,
             roll_mag_aug=False, 
-            noramlize=True,
             mode='train'
         ):
 
@@ -140,7 +139,6 @@ class MultichannelDataset(Dataset):
         self.index_dict = make_index_dict(label_csv)
         self.label_num = len(self.index_dict)
         self.roll_mag_aug = roll_mag_aug
-        self.noramlize = noramlize
         self.mode = mode
         print(f'multilabel: {self.multilabel}')
         print('using mix-up with rate {:f}'.format(self.mixup))
@@ -153,7 +151,6 @@ class MultichannelDataset(Dataset):
         return torch.roll(waveform, idx) * mag
 
     def fetch_spatial_targets(self, reverb_item):
-        #! TODO, check this 
         sensor_position = np.array([float(i) for i in reverb_item['sensor_position'].split(',')])
         source_position = np.array([float(i) for i in reverb_item['source_position'].split(',')])
         distance = np.linalg.norm(sensor_position - source_position)
@@ -206,37 +203,29 @@ class MultichannelDataset(Dataset):
             mix_audio_path = os.path.join(self.audio_path_root, mix_datum['folder'], mix_datum['id'] + self._ext_audio)
 
             if 'unbalanced' in audio_path:
-                if self.noramlize:
-                    pass #TODO: check this
                 h5_path, fname = audio_path.rsplit('/', 1)
-                waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                waveform = h5py.File(h5_path, "r")[fname][:]
                 sr = 32000
             else:
-                if self.noramlize:
-                    audio_path = audio_path.replace(datum['folder'], f"normalized_{datum['folder']}")
                 waveform, sr = sf.read(audio_path)
-
+            
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]  
             if sr != 32000:
                 waveform = signal.resample_poly(waveform, 32000, sr)
 
             if 'unbalanced' in mix_audio_path:
-                if self.noramlize:
-                    pass #TODO: check this
                 h5_path, fname = mix_audio_path.rsplit('/', 1)
-                mix_waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                mix_waveform = h5py.File(h5_path, "r")[fname][:]
                 sr = 32000
             else:
-                if self.noramlize:
-                    mix_audio_path = mix_audio_path.replace(mix_datum['folder'], f"normalized_{mix_datum['folder']}")
                 mix_waveform, sr = sf.read(mix_audio_path)
-
+            
             if len(mix_waveform.shape) > 1: 
                 mix_waveform = mix_waveform[:, 0]  
             if sr != 32000:
                 mix_waveform = signal.resample_poly(mix_waveform, 32000, sr)
-       
+            
             waveform = torch.from_numpy(waveform).reshape(1, -1).float()
             mix_waveform = torch.from_numpy(mix_waveform).reshape(1, -1).float()
 
@@ -273,7 +262,7 @@ class MultichannelDataset(Dataset):
             datum = self.data[index]
             label_indices = np.zeros(self.label_num)
             audio_path = os.path.join(self.audio_path_root, datum['folder'], datum['id'] + self._ext_audio)
-                  
+            
             reverb_item = random.choice(self.reverb)
             reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, reverb_item['fname'])
             reverb = torch.from_numpy(np.load(reverb_path)).float()
@@ -285,20 +274,16 @@ class MultichannelDataset(Dataset):
                 reverb = reverb[:, :32000 * 2]
 
             if 'unbalanced' in audio_path:
-                if self.noramlize:
-                    pass #TODO: check this
                 h5_path, fname = audio_path.rsplit('/', 1)
-                waveform = h5py.File(h5_path, "r")[fname][:].astype(np.float32)
+                waveform = h5py.File(h5_path, "r")[fname][:]
                 sr = 32000
             else:
-                if self.noramlize:
-                    audio_path = audio_path.replace(datum['folder'], f"normalized_{datum['folder']}")
                 waveform, sr = sf.read(audio_path)
+
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]   
-           
             if sr != 32000:
-                waveform = signal.resample_poly(waveform, 32000, sr)
+                waveform = signal.resample_poly(waveform, 32000, sr) 
 
             waveform = torch.from_numpy(waveform).reshape(1, -1).float()
             if self.roll_mag_aug:
@@ -315,7 +300,7 @@ class MultichannelDataset(Dataset):
             label_indices = torch.FloatTensor(label_indices)
 
             spaital_targets = self.fetch_spatial_targets(reverb_item)
-
+            
         return waveform, reverb, label_indices, spaital_targets, audio_path, reverb_path
 
     def __len__(self):

@@ -152,6 +152,7 @@ def get_args_parser():
     #parser.add_argument("--mixup", type=float, default=0, help="how many (0-1) samples need to be mixup during training")
     parser.add_argument("--dataset", type=str, default="audioset", help="the dataset used", choices=["audioset", "esc50", "speechcommands", "k400"])
     parser.add_argument("--use_soft", type=bool, default=False)
+    parser.add_argument('--audio_normalize', action='store_true', help='normalize the audio')
 
     #parser.add_argument("--distributed", type=bool, default=True)
     parser.add_argument('--first_eval_ep', default=0, type=int, help='do eval after first_eval_ep')
@@ -265,14 +266,16 @@ def main(args):
             args.audioset_train, audio_conf=audio_conf_train, 
             reverb_json=args.reverb_train_json, reverb_type=args.reverb_type, 
             label_csv=args.label_csv,
-            roll_mag_aug=args.roll_mag_aug, noramlize=True, mode='train'
+            roll_mag_aug=args.roll_mag_aug, 
+            mode='train'
         )
         
         dataset_val = MultichannelDataset(
             args.audioset_eval, audio_conf=audio_conf_val, 
             reverb_json=args.reverb_val_json, reverb_type=args.reverb_type, 
             label_csv=args.label_csv,
-            roll_mag_aug=False, noramlize=True, mode='eval'
+            roll_mag_aug=False, 
+            mode='eval'
         )
 
     #args.distributed:
@@ -356,6 +359,7 @@ def main(args):
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
         num_cls_tokens=3,
+        audio_normalize=args.audio_normalize,
     )
 
     #if args.finetune and not args.eval:
@@ -401,10 +405,9 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    loss_fn = models_vit.AutomaticWeightedLoss(4).to(device)
     # build optimizer with layer-wise lr decay (lrd)
     param_groups = lrd.param_groups_lrd(
-        model_without_ddp, loss_fn, args.weight_decay,
+        model_without_ddp, args.weight_decay,
         no_weight_decay_list=model_without_ddp.no_weight_decay(),
         layer_decay=args.layer_decay
     )
@@ -443,13 +446,13 @@ def main(args):
             data_loader_train.sampler.set_epoch(epoch)
         
         train_stats = train_one_epoch(
-                model, criterion, loss_fn, data_loader_train,
+                model, criterion, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
                 args.clip_grad, mixup_fn,
                 log_writer=log_writer,
                 args=args
             )
-        if args.output_dir and (epoch % 20 == 0 or epoch == args.epochs - 1):
+        if args.output_dir and epoch > 25 and (epoch % 1 == 0 or epoch == args.epochs - 1):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
