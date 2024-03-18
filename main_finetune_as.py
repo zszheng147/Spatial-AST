@@ -141,7 +141,7 @@ def get_args_parser():
                         help='url used to set up distributed training')
 
     # For audioset
-    parser.add_argument('--audio_exp', action='store_false', default=True, help='audio exp')
+    parser.add_argument("--audio_path_root", type=str, default='/path/to/audioset', help="audioset folder path")
     parser.add_argument("--audioset_train", type=str, default='/path/to/train', help="training data json")
     parser.add_argument("--audioset_eval", type=str, default='/path/to/eval', help="validation data json")
     parser.add_argument("--label_csv", type=str, default='', help="csv with class labels")
@@ -170,48 +170,12 @@ def get_args_parser():
     parser.add_argument('--replace_with_mae', action='store_true', default=False, help='replace_with_mae')
     parser.add_argument('--load_imgnet_pt', action='store_true', default=False, help='when img_pt_ckpt, if load_imgnet_pt, use img_pt_ckpt to initialize audio branch, if not, keep audio branch random')
     
+    parser.add_argument('--reverb_path_root', type=str, default='/path/to/reverberation', help='reverb folder path')
     parser.add_argument('--reverb_type', type=str, default='binaural', choices=['binaural', 'mono'], help='reverb type')
     parser.add_argument('--reverb_train_json', type=str, default='/path/to/reverberation.json', help='reverb train json')
     parser.add_argument('--reverb_val_json', type=str, default='/path/to/reverberation.json', help='reverb val json')
 
     return parser
-
-
-class PatchEmbed_new(nn.Module):
-    """ Flexible Image to Patch Embedding
-    """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, stride=10):
-        super().__init__()
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-        stride = to_2tuple(stride)
-        
-        self.img_size = img_size
-        self.patch_size = patch_size
-        
-        self.in_chans = in_chans
-
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) # with overlapped patches
-        #self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-
-        #self.patch_hw = (img_size[1] // patch_size[1], img_size[0] // patch_size[0])
-        #self.num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
-        _, _, h, w = self.get_output_shape(img_size) # n, emb_dim, h, w
-        self.patch_hw = (h, w)
-        self.num_patches = h*w
-
-    def get_output_shape(self, img_size):
-        # todo: don't be lazy..
-        return self.proj(torch.randn(1, self.in_chans, img_size[0],img_size[1])).shape 
-
-    def forward(self, x):
-        B, C, H, W = x.shape
-        # FIXME look at relaxing size constraints
-        #assert H == self.img_size[0] and W == self.img_size[1], \
-        #    f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj(x)
-        x = x.flatten(2).transpose(1, 2)
-        return x
 
 def main(args):
     misc.init_distributed_mode(args)
@@ -228,55 +192,65 @@ def main(args):
 
     cudnn.benchmark = True
 
-    if not args.audio_exp:
-        dataset_train = build_dataset(is_train=True, args=args)
-        dataset_val = build_dataset(is_train=False, args=args)
-    else:
-        norm_stats = {'audioset':[-4.2677393, 4.5689974], 'k400':[-4.2677393, 4.5689974], 
-                      'esc50':[-6.6268077, 5.358466], 'speechcommands':[-6.845978, 5.5654526]}
-        target_length = {'audioset':1024, 'k400':1024, 'esc50':512, 'speechcommands':128}
-        multilabel_dataset = {'audioset': True, 'esc50': False, 'k400': False, 'speechcommands': True}
-        audio_conf_train = {
-            'num_mel_bins': 128, 
-            'target_length': target_length[args.dataset], 
-            'freqm': 48,
-            'timem': 192,
-            'mixup': args.mixup,
-            'dataset': args.dataset,
-            'mode':'train',
-            'mean':norm_stats[args.dataset][0],
-            'std':norm_stats[args.dataset][1],
-            'noise':False,
-            'multilabel':multilabel_dataset[args.dataset],
-        }
-        audio_conf_val = {
-            'num_mel_bins': 128, 
-            'target_length': target_length[args.dataset], 
-            'freqm': 0,
-            'timem': 0,
-            'mixup': 0,
-            'dataset': args.dataset,
-            'mode':'val',
-            'mean':norm_stats[args.dataset][0],
-            'std':norm_stats[args.dataset][1],
-            'noise':False,
-            'multilabel':multilabel_dataset[args.dataset],
-        }  
-        dataset_train = MultichannelDataset(
-            args.audioset_train, audio_conf=audio_conf_train, 
-            reverb_json=args.reverb_train_json, reverb_type=args.reverb_type, 
-            label_csv=args.label_csv,
-            roll_mag_aug=args.roll_mag_aug, 
-            mode='train'
-        )
-        
-        dataset_val = MultichannelDataset(
-            args.audioset_eval, audio_conf=audio_conf_val, 
-            reverb_json=args.reverb_val_json, reverb_type=args.reverb_type, 
-            label_csv=args.label_csv,
-            roll_mag_aug=False, 
-            mode='eval'
-        )
+    norm_stats = {'audioset': [-4.2677393, 4.5689974]}
+    target_length = {'audioset': 1024}
+    multilabel_dataset = {'audioset': True}
+
+    audio_conf_train = {
+        'num_mel_bins': 128, 
+        'target_length': target_length[args.dataset], 
+        'freqm': 48,
+        'timem': 192,
+        'mixup': args.mixup,
+        'dataset': args.dataset,
+        'mode':'train',
+        'mean':norm_stats[args.dataset][0],
+        'std':norm_stats[args.dataset][1],
+        'noise':False,
+        'multilabel':multilabel_dataset[args.dataset],
+    }
+
+    audio_conf_val = {
+        'num_mel_bins': 128, 
+        'target_length': target_length[args.dataset], 
+        'freqm': 0,
+        'timem': 0,
+        'mixup': 0,
+        'dataset': args.dataset,
+        'mode':'val',
+        'mean':norm_stats[args.dataset][0],
+        'std':norm_stats[args.dataset][1],
+        'noise':False,
+        'multilabel':multilabel_dataset[args.dataset],
+    }  
+
+    dataset_train = MultichannelDataset(
+        audio_json=args.audioset_train,
+        audio_conf=audio_conf_train,
+        audio_path_root=args.audio_path_root,
+        reverb_json=args.reverb_train_json,
+        reverb_type=args.reverb_type,
+        reverb_path_root=args.reverb_path_root,
+        label_csv=args.label_csv,
+        roll_mag_aug=args.roll_mag_aug, 
+        normalize=args.audio_normalize, 
+        _ext_audio=".wav",
+        mode='train'
+    )
+    
+    dataset_val = MultichannelDataset(
+        audio_json=args.audioset_eval,
+        audio_conf=audio_conf_val, 
+        audio_path_root=args.audio_path_root,
+        reverb_json=args.reverb_val_json, 
+        reverb_type=args.reverb_type, 
+        reverb_path_root=args.reverb_path_root,
+        label_csv=args.label_csv,
+        roll_mag_aug=False, 
+        normalize=args.audio_normalize, 
+        _ext_audio=".wav",
+        mode='eval'
+    )
 
     #args.distributed:
     num_tasks = misc.get_world_size()
@@ -359,7 +333,6 @@ def main(args):
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
         num_cls_tokens=3,
-        audio_normalize=args.audio_normalize,
     )
 
     #if args.finetune and not args.eval:
@@ -452,7 +425,7 @@ def main(args):
                 log_writer=log_writer,
                 args=args
             )
-        if args.output_dir and epoch > 25 and (epoch % 1 == 0 or epoch == args.epochs - 1):
+        if args.output_dir and epoch > 35 and (epoch % 1 == 0 or epoch == args.epochs - 1):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)

@@ -13,7 +13,7 @@ from scipy import signal
 import torch
 import torch.distributed as dist
 import torch.nn.functional
-import torchaudio
+
 from torch.utils.data import Dataset, Sampler
 from torch.utils.data import DistributedSampler, WeightedRandomSampler
 
@@ -103,27 +103,38 @@ def make_index_dict(label_csv):
         line_count = 0
         for row in csv_reader:
             # index_lookup[row['mid']] = row['index']
-            index_lookup[row['mid']] = line_count 
+            index_lookup[row['mid']] = line_count
             line_count += 1
     return index_lookup
 
-class MultichannelDataset(Dataset):
-    _ext_reverb = ".npy"
-    _ext_audio = ".wav"
-    audio_path_root = "/data/shared/AudioSet"
-    reverb_path_root = "/data/shared/zsz01/SpatialAudio/reverb/mp3d"
+def normalize_audio(audio_data, target_dBFS=-14.0):
+    rms = np.sqrt(np.mean(audio_data**2)) # Calculate the RMS of the audio
+   
+    if rms == 0:  # Avoid division by zero in case of a completely silent audio
+        return audio_data
     
+    current_dBFS = 20 * np.log10(rms) # Convert RMS to dBFS
+    gain_dB = target_dBFS - current_dBFS # Calculate the required gain in dB
+    gain_linear = 10 ** (gain_dB / 20) # Convert gain from dB to linear scale
+    normalized_audio = audio_data * gain_linear # Apply the gain to the audio data
+    return normalized_audio
+
+class MultichannelDataset(Dataset):
     def __init__(
             self, 
-            audio_json, audio_conf,
-            reverb_json, reverb_type,  
+            audio_json, audio_conf, audio_path_root,
+            reverb_json, reverb_type, reverb_path_root,
             label_csv=None,
             roll_mag_aug=False, 
-            mode='train'
+            normalize=True,
+            _ext_audio=".wav",
+            mode="train"
         ):
 
         self.data = json.load(open(audio_json, 'r'))
+        self.audio_path_root = audio_path_root
 
+        self.reverb_path_root = reverb_path_root
         self.reverb = json.load(open(reverb_json, 'r'))['data']
         self.reverb_type = reverb_type
         self.channel_num = 2 if reverb_type == 'binaural' else 9 if reverb_type == 'ambisonics' else 1
@@ -138,8 +149,13 @@ class MultichannelDataset(Dataset):
         self.dataset = self.audio_conf.get('dataset')
         self.index_dict = make_index_dict(label_csv)
         self.label_num = len(self.index_dict)
+        
         self.roll_mag_aug = roll_mag_aug
+        self.normalize = normalize
+        
+        self._ext_audio = _ext_audio
         self.mode = mode
+
         print(f'multilabel: {self.multilabel}')
         print('using mix-up with rate {:f}'.format(self.mixup))
         print(f'number of classes: {self.label_num}')
@@ -208,23 +224,27 @@ class MultichannelDataset(Dataset):
                 sr = 32000
             else:
                 waveform, sr = sf.read(audio_path)
-            
+
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]  
             if sr != 32000:
                 waveform = signal.resample_poly(waveform, 32000, sr)
-
+            if self.normalize:
+                waveform = normalize_audio(waveform, -14.0)
+            
             if 'unbalanced' in mix_audio_path:
                 h5_path, fname = mix_audio_path.rsplit('/', 1)
                 mix_waveform = h5py.File(h5_path, "r")[fname][:]
                 sr = 32000
             else:
                 mix_waveform, sr = sf.read(mix_audio_path)
-            
+
             if len(mix_waveform.shape) > 1: 
                 mix_waveform = mix_waveform[:, 0]  
             if sr != 32000:
                 mix_waveform = signal.resample_poly(mix_waveform, 32000, sr)
+            if self.normalize:
+                mix_waveform = normalize_audio(mix_waveform, -14.0)
             
             waveform = torch.from_numpy(waveform).reshape(1, -1).float()
             mix_waveform = torch.from_numpy(mix_waveform).reshape(1, -1).float()
@@ -262,7 +282,7 @@ class MultichannelDataset(Dataset):
             datum = self.data[index]
             label_indices = np.zeros(self.label_num)
             audio_path = os.path.join(self.audio_path_root, datum['folder'], datum['id'] + self._ext_audio)
-            
+                  
             reverb_item = random.choice(self.reverb)
             reverb_path = os.path.join(self.reverb_path_root, self.reverb_type, reverb_item['fname'])
             reverb = torch.from_numpy(np.load(reverb_path)).float()
@@ -279,12 +299,14 @@ class MultichannelDataset(Dataset):
                 sr = 32000
             else:
                 waveform, sr = sf.read(audio_path)
-
+            
             if len(waveform.shape) > 1: 
                 waveform = waveform[:, 0]   
             if sr != 32000:
-                waveform = signal.resample_poly(waveform, 32000, sr) 
-
+                waveform = signal.resample_poly(waveform, 32000, sr)
+            if self.normalize:
+                waveform = normalize_audio(waveform, -14.0)
+            
             waveform = torch.from_numpy(waveform).reshape(1, -1).float()
             if self.roll_mag_aug:
                 waveform = self._roll_mag_aug(waveform)
@@ -300,7 +322,7 @@ class MultichannelDataset(Dataset):
             label_indices = torch.FloatTensor(label_indices)
 
             spaital_targets = self.fetch_spatial_targets(reverb_item)
-            
+
         return waveform, reverb, label_indices, spaital_targets, audio_path, reverb_path
 
     def __len__(self):

@@ -88,8 +88,8 @@ def train_one_epoch(
         #     loss3 = torch.tensor(0.).to(device)
         #     loss4 = torch.tensor(0.).to(device)
         
-        loss = loss1
-        # loss = 1200 * loss1 + 1 * loss2 + 3 * (loss3 + loss4)
+        # loss = loss1
+        loss = 1 * loss1 + 1 * loss2 + 1 * (loss3 + loss4)
             
         loss_value = loss.item()
 
@@ -188,7 +188,6 @@ def evaluate(data_loader, model, device, dist_eval=False):
     total_samples = len(all_distances)
     spatial_outputs = []
 
-    #! TODO: check this
     distance_correct = np.sum([1 for truth, pred in zip(all_distances, all_distance_preds) if abs(truth - pred) <= 1])
     spatial_outputs.append(distance_correct)
 

@@ -17,24 +17,11 @@ from torch.nn import functional as F
 
 import torchaudio
 
+from einops import rearrange
 from torchlibrosa.stft import STFT, LogmelFilterBank
 from timm.models.layers import to_2tuple, trunc_normal_
 
 from vision_transformer import VisionTransformer as _VisionTransformer
-
-def normalize_audio(audio_data, target_dBFS=-14.0):
-    rms = torch.sqrt(torch.mean(audio_data**2, dim=2, keepdim=True))
-
-    silent_indices = rms == 0
-
-    current_dBFS = 20 * torch.log10(rms)  # Convert RMS to dBFS
-    gain_dB = target_dBFS - current_dBFS  # Calculate the required gain in dB
-    gain_linear = 10 ** (gain_dB / 20)  # Convert gain from dB to linear scale
-
-    gain_linear[silent_indices] = 1.0
-    normalized_audio = audio_data * gain_linear
-
-    return normalized_audio
 
 def conv3x3(in_channels, out_channels, stride=1):
     "3x3 convolution with padding"
@@ -76,7 +63,7 @@ class PatchEmbed_new(nn.Module):
 class VisionTransformer(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
-    def __init__(self, num_cls_tokens=3, audio_normalize=True, **kwargs):
+    def __init__(self, num_cls_tokens=3, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 1
@@ -107,7 +94,7 @@ class VisionTransformer(_VisionTransformer):
         )
         
         self.conv_downsample = nn.Sequential(
-            conv3x3(2, 1), 
+            conv3x3(1, 1), 
             nn.BatchNorm2d(1),
             nn.GELU(),
         )
@@ -115,8 +102,7 @@ class VisionTransformer(_VisionTransformer):
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
-        self.audio_normalize = audio_normalize
-        self.bn = nn.BatchNorm2d(2, affine=False)
+        self.bn = nn.BatchNorm2d(1, affine=False)
         del self.norm  # remove the original norm
 
         self.target_frame = 1024
@@ -187,9 +173,7 @@ class VisionTransformer(_VisionTransformer):
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
-        if self.audio_normalize:
-            waveforms = normalize_audio(waveforms)
-        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        # waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
         B, C, T = waveforms.shape
 
         waveforms = waveforms.reshape(B * C, T)
@@ -200,8 +184,8 @@ class VisionTransformer(_VisionTransformer):
         x = log_mel
         
         # IPD = torch.atan2(imag[1::2], real[1::2]) - torch.atan2(imag[::2], real[::2])
-        # x = torch.cat([log_mel, torch.matmul(IPD, self.logmel_extractor.melW)], dim=1)
-        
+        # x = torch.cat([log_mel, torch.matmul(torch.cat([torch.cos(IPD), torch.sin(IPD)], dim=1), self.logmel_extractor.melW)], dim=1)
+
         if x.shape[2] < self.target_frame:
             x = nn.functional.interpolate(x, (self.target_frame, x.shape[3]), mode="bicubic", align_corners=True)
     
@@ -236,4 +220,3 @@ def vit_base_patch16(**kwargs):
         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
-
