@@ -28,8 +28,7 @@ def train_one_epoch(
         model: torch.nn.Module, criterion: torch.nn.Module,
         data_loader: Iterable, optimizer: torch.optim.Optimizer,
         device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
-        mixup_fn: Optional[Mixup] = None, log_writer=None,
-        args=None
+        mixup_fn: Optional[Mixup] = None, log_writer=None, args=None
     ):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -64,29 +63,10 @@ def train_one_epoch(
         # with torch.cuda.amp.autocast():
         outputs = model(waveforms, reverbs, mask_t_prob=args.mask_t_prob, mask_f_prob=args.mask_f_prob)
         
-        # logits = torch.sort(torch.softmax(outputs[0], dim=1), descending=True, dim=1)[1]
-        # valid_indices = []
-        # for i in range(logits.size(0)):
-        #     nonzero_indices = (targets[i] > 0).nonzero(as_tuple=True)[0]
-        #     is_valid = 1 if all(idx.item() in logits[i, :len(nonzero_indices)] for idx in nonzero_indices) else 0
-        #     valid_indices.append(is_valid)
-
-        # valid_indices = torch.tensor(valid_indices).float().to(device)
-        # # valid_indices = torch.ones(outputs[0].size(0)).float().to(device)
-        # valid_cnt = torch.sum(valid_indices)
-
         loss1 = criterion(outputs[0], targets)
         loss2 = F.cross_entropy(outputs[1], distance)
         loss3 = F.cross_entropy(outputs[2], azimuth)
         loss4 = F.cross_entropy(outputs[3], elevation)
-        # if valid_cnt > 0:
-        #     loss2 = (valid_indices * F.cross_entropy(outputs[1], distance, reduction='none')).sum() / valid_cnt
-        #     loss3 = (valid_indices * F.cross_entropy(outputs[2], azimuth, reduction='none')).sum() / valid_cnt
-        #     loss4 = (valid_indices * F.cross_entropy(outputs[3], elevation, reduction='none')).sum() / valid_cnt
-        # else:
-        #     loss2 = torch.tensor(0.).to(device)
-        #     loss3 = torch.tensor(0.).to(device)
-        #     loss4 = torch.tensor(0.).to(device)
         
         # loss = loss1
         loss = 1 * loss1 + 1 * loss2 + 1 * (loss3 + loss4)
@@ -209,9 +189,9 @@ def evaluate(data_loader, model, device, dist_eval=False):
 
     return {
         "mAP": mAP,
-        "distance_accuracy": spatial_outputs[0]/total_samples,
-        "doa_error": spatial_outputs[1]/total_samples,
-        "doa_angular_error": spatial_outputs[2]/total_samples
+        "distance_accuracy": spatial_outputs[0] / total_samples,
+        "doa_error": spatial_outputs[1] / total_samples,
+        "doa_angular_error": spatial_outputs[2] / total_samples
     }
 
 

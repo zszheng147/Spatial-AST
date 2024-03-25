@@ -12,10 +12,9 @@ from scipy import signal
 
 import torch
 import torch.distributed as dist
-import torch.nn.functional
+import torch.nn.functional as F
 
-from torch.utils.data import Dataset, Sampler
-from torch.utils.data import DistributedSampler, WeightedRandomSampler
+from torch.utils.data import Dataset, Sampler, DistributedSampler, WeightedRandomSampler
 
 class DistributedSamplerWrapper(DistributedSampler):
     def __init__(
@@ -206,7 +205,7 @@ class MultichannelDataset(Dataset):
             reverb = torch.from_numpy(np.load(reverb_path)).float()
             reverb_padding = 32000 * 2 - reverb.shape[1]
             if reverb_padding > 0:
-                reverb = torch.nn.functional.pad(reverb, (0, reverb_padding), 'constant', 0)
+                reverb = F.pad(reverb, (0, reverb_padding), 'constant', 0)
             elif reverb_padding < 0:
                 reverb = reverb[:, :32000 * 2]
 
@@ -255,13 +254,13 @@ class MultichannelDataset(Dataset):
 
             padding = 32000 * 10 - waveform.shape[1]
             if padding > 0:
-                waveform = torch.nn.functional.pad(waveform, (0, padding), 'constant', 0)
+                waveform = F.pad(waveform, (0, padding), 'constant', 0)
             elif padding < 0:
                 waveform = waveform[:, :32000 * 10]
 
             mix_padding = 32000 * 10 - mix_waveform.shape[1]
             if mix_padding > 0:
-                mix_waveform = torch.nn.functional.pad(mix_waveform, (0, mix_padding), 'constant', 0)
+                mix_waveform = F.pad(mix_waveform, (0, mix_padding), 'constant', 0)
             elif mix_padding < 0:
                 mix_waveform = mix_waveform[:, :32000 * 10]
             
@@ -289,7 +288,7 @@ class MultichannelDataset(Dataset):
 
             reverb_padding = 32000 * 2 - reverb.shape[1]
             if reverb_padding > 0:
-                reverb = torch.nn.functional.pad(reverb, (0, reverb_padding), 'constant', 0)
+                reverb = F.pad(reverb, (0, reverb_padding), 'constant', 0)
             elif reverb_padding < 0:
                 reverb = reverb[:, :32000 * 2]
 
@@ -313,7 +312,7 @@ class MultichannelDataset(Dataset):
 
             padding = 32000 * 10 - waveform.shape[1]
             if padding > 0:
-                waveform = torch.nn.functional.pad(waveform, (0, padding), 'constant', 0)
+                waveform = F.pad(waveform, (0, padding), 'constant', 0)
             elif padding < 0:
                 waveform = waveform[:, :32000 * 10]
 
