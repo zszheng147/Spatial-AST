@@ -4,7 +4,7 @@ This repo hosts the code and models of "[BAT: Learning to Reason about Spatial S
 
 
 <p align="center">
-  <img align="middle" width="800" src="assets/Spatial-AST.png"/>
+  <img align="middle" height="300" src="assets/Spatial-AST.png"/>
 </p>
 
 ### Citation
