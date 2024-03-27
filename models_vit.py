@@ -94,7 +94,7 @@ class VisionTransformer(_VisionTransformer):
         )
         
         self.conv_downsample = nn.Sequential(
-            conv3x3(1, 1), 
+            conv3x3(4, 1), 
             nn.BatchNorm2d(1),
             nn.GELU(),
         )
@@ -102,7 +102,7 @@ class VisionTransformer(_VisionTransformer):
         self.timem = torchaudio.transforms.TimeMasking(192)
         self.freqm = torchaudio.transforms.FrequencyMasking(48)
 
-        self.bn = nn.BatchNorm2d(1, affine=False)
+        self.bn = nn.BatchNorm2d(2, affine=False)
         del self.norm  # remove the original norm
 
         self.target_frame = 1024
@@ -173,7 +173,7 @@ class VisionTransformer(_VisionTransformer):
 
     # overwrite original timm
     def forward(self, waveforms, reverbs, mask_t_prob=0.0, mask_f_prob=0.0):
-        # waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
+        waveforms = torchaudio.functional.fftconvolve(waveforms, reverbs, mode='full')[..., :waveforms.shape[-1]]
         B, C, T = waveforms.shape
 
         waveforms = waveforms.reshape(B * C, T)

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TORCH_DISTRIBUTED_DEBUG="DETAIL"
 
 blr=1e-3
@@ -11,7 +11,7 @@ dataset=audioset
 ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/models/audiomae/pretrained.pth
 # ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/mel-IPD-cos-sin-stack/checkpoint-52.pth
 
-audio_path_root=/hpc_stor03/public/shared/data/raa/AudioSet
+audio_path_root=/data/shared/AudioSet
 audioset_label=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/class_whitelist_encoder.csv
 audioset_train_json=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/unbalanced_no_missing.json
 audioset_train_weight=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/distributed/unbalanced.csv
@@ -32,7 +32,7 @@ mkdir -p $output_dir
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=4 --master_port=54633 --use_env main_finetune_as.py \
+    --nproc_per_node=8 --master_port=54633 --use_env main_finetune_as.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
