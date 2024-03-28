@@ -1,24 +1,11 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-# --------------------------------------------------------
-# References:
-# timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
-# DeiT: https://github.com/facebookresearch/deit
-# --------------------------------------------------------
-import numba
 from functools import partial
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
 
 import torchaudio
-
-from einops import rearrange
 from torchlibrosa.stft import STFT, LogmelFilterBank
+
 from timm.models.layers import to_2tuple, trunc_normal_
 
 from vision_transformer import VisionTransformer as _VisionTransformer

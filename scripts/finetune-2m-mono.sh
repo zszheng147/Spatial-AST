@@ -31,7 +31,7 @@ mkdir -p $output_dir
 # cp /hpc_stor03/sjtu_home/zhisheng.zheng/AudioMAE-fusion/scripts/finetune-2m-mono.sh $output_dir/
 
 python -m torch.distributed.launch \
-    --nproc_per_node=4 --master_port=32809 --use_env main_finetune_as.py \
+    --nproc_per_node=4 --master_port=32809 --use_env main_finetune.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \

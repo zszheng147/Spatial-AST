@@ -8,6 +8,7 @@
 # DeiT: https://github.com/facebookresearch/deit
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
 # --------------------------------------------------------
+import numba
 
 import builtins
 import datetime
@@ -178,7 +179,7 @@ def setup_for_distributed(is_master):
         force = force or (get_world_size() > 8)
         if is_master or force:
             now = datetime.datetime.now().time()
-            builtin_print('[{}] '.format(now), end='')  # print with time stamp
+            builtin_print('[{}] '.format(now.strftime('%H:%M:%S')), end='')  # print with time stamp
             builtin_print(*args, **kwargs)
 
     builtins.print = print

@@ -1,33 +1,36 @@
+# Copyright (c) Zhisheng Zheng, The University of Texas at Austin.
+# All rights reserved.
+
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+# --------------------------------------------------------
+# References:
+# Audio-MAE: https://github.com/facebookresearch/AudioMAE
+# --------------------------------------------------------
+import os, time, datetime, json
 import argparse
-import datetime
-import json
-import os
-import time
 from pathlib import Path
 
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
 import torch.nn as nn
-import timm
+import torch.backends.cudnn as cudnn
 from torch.utils.data import WeightedRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
+import timm
+assert timm.__version__ == "0.3.2"  # version check
 from timm.data.mixup import Mixup
 from timm.loss import SoftTargetCrossEntropy
-from timm.models.layers import to_2tuple, trunc_normal_
 
-import models_vit
-from engine_finetune_as import evaluate, train_one_epoch
-
+# 
 from data.dataset import DistributedSamplerWrapper, DistributedWeightedSampler, MultichannelDataset
 import utils.lr_decay as lrd
 import utils.misc as misc
-from utils.datasets import build_dataset
 from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 
-assert timm.__version__ == "0.3.2"  # version check
-
+import spatial_ast
+from engine_finetune import evaluate, train_one_epoch
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning for image classification', add_help=False)
@@ -105,9 +108,7 @@ def get_args_parser():
                         help='Use class token instead of global pool for classification')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/path/to/dataset', type=str,
-                        help='dataset path')
-    parser.add_argument('--nb_classes', default=527, type=int,
+    parser.add_argument('--nb_classes', default=355, type=int,
                         help='number of the classification types')
 
     parser.add_argument('--output_dir', default='./outputs',
@@ -161,7 +162,6 @@ def get_args_parser():
     parser.add_argument('--roll_mag_aug', action='store_true', default=False, help='use roll_mag_aug')
     parser.add_argument('--mask_t_prob', default=0.0, type=float, help='T masking ratio (percentage of removed patches).') #  
     parser.add_argument('--mask_f_prob', default=0.0, type=float, help='F masking ratio (percentage of removed patches).') #  
-    #parser.add_argument('--split_pos', type=bool, default=False, help='use splitted pos emb')
     parser.add_argument('--weight_sampler', action='store_true', default=False, help='use weight_sampler')
     parser.add_argument('--epoch_len', default=200000, type=int, help='num of samples/epoch with weight_sampler')
     parser.add_argument('--distributed_wrapper', action='store_true', default=False, help='use distributedwrapper for weighted sampler')
@@ -329,7 +329,7 @@ def main(args):
             label_smoothing=args.smoothing, num_classes=args.nb_classes
         )
     
-    model = models_vit.__dict__[args.model](
+    model = spatial_ast.__dict__[args.model](
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
         num_cls_tokens=3,

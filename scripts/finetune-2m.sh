@@ -32,7 +32,7 @@ mkdir -p $output_dir
 
 # -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
-    --nproc_per_node=8 --master_port=54633 --use_env main_finetune_as.py \
+    --nproc_per_node=8 --master_port=54633 --use_env main_finetune.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
     --model vit_base_patch16 \
@@ -63,4 +63,4 @@ python -m torch.distributed.launch \
     --mask_2d \
     --nb_classes 355 \
     --audio_normalize \
-    --epoch_len 190000 \
+    --epoch_len 19000 \

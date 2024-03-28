@@ -14,7 +14,7 @@ reverb_train_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/train_reverberatio
 reverb_val_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/eval_reverberation.json
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch \
-    --nproc_per_node=4 --use_env main_finetune_as.py \
+    --nproc_per_node=4 --use_env main_finetune.py \
     --log_dir /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/eval \
     --output_dir /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/eval \
     --model vit_base_patch16 \
