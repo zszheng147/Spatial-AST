@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 
 import torchaudio
-from torchlibrosa.stft import STFT, LogmelFilterBank
 
 from timm.models.layers import to_2tuple, trunc_normal_
 
-from vision_transformer import VisionTransformer as _VisionTransformer
+from utils.stft import STFT, LogmelFilterBank
+from utils.vision_transformer import VisionTransformer as _VisionTransformer
 
 def conv3x3(in_channels, out_channels, stride=1):
     "3x3 convolution with padding"

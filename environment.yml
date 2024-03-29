@@ -12,6 +12,5 @@ dependencies:
       - torchaudio==2.0.2
       - torchvision==0.15.2
       - timm==0.3.2
-      - torchlibrosa
       - tensorboard
       - h5py

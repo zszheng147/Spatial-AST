@@ -20,7 +20,7 @@ The TODOs left will be completed before the end of May 2024.
 - [ ] Inference colab
 - [ ] Upload training data: SpatialSoundQA
 - [ ] Upload pretrained weights
-- [ ] Fix numba output bug
+- [x] Fix numba output bug
 
 
 ### Citation

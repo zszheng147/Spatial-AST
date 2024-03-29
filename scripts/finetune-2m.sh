@@ -9,7 +9,6 @@ mask_f_prob=0.25
 
 dataset=audioset
 ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/models/audiomae/pretrained.pth
-# ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/mel-IPD-cos-sin-stack/checkpoint-52.pth
 
 audio_path_root=/data/shared/AudioSet
 audioset_label=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/class_whitelist_encoder.csv
@@ -26,11 +25,7 @@ output_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/
 log_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/test/log
 
 mkdir -p $output_dir
-# cp /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/models_vit.py $output_dir/
-# cp /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/engine_finetune_as.py $output_dir/
-# cp /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/scripts/finetune-2m.sh $output_dir/
 
-# -m debugpy --listen 55555 --wait-for-client
 python -m torch.distributed.launch \
     --nproc_per_node=8 --master_port=54633 --use_env main_finetune.py \
     --log_dir $log_dir \
@@ -63,4 +58,4 @@ python -m torch.distributed.launch \
     --mask_2d \
     --nb_classes 355 \
     --audio_normalize \
-    --epoch_len 19000 \
+    --epoch_len 190000 \
