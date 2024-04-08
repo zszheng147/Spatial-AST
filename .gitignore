@@ -4,4 +4,4 @@ saved_checkpoints/
 *.pth
 *.npy
 *.txt
-.gitignore
+ablations/
