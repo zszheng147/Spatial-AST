@@ -30,7 +30,7 @@ python -m torch.distributed.launch \
     --nproc_per_node=8 --master_port=54633 --use_env main_finetune.py \
     --log_dir $log_dir \
 	--output_dir $output_dir \
-    --model vit_base_patch16 \
+    --model build_AST \
     --dataset $dataset \
     --audio_path_root $audio_path_root \
     --audioset_train $audioset_train_json \

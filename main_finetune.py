@@ -23,11 +23,10 @@ assert timm.__version__ == "0.3.2"  # version check
 from timm.data.mixup import Mixup
 from timm.loss import SoftTargetCrossEntropy
 
-# 
-from data.dataset import DistributedSamplerWrapper, DistributedWeightedSampler, MultichannelDataset
 import utils.lr_decay as lrd
 import utils.misc as misc
 from utils.misc import NativeScalerWithGradNormCount as NativeScaler
+from data.dataset import DistributedSamplerWrapper, DistributedWeightedSampler, MultichannelDataset
 
 import spatial_ast
 from engine_finetune import evaluate, train_one_epoch
@@ -41,7 +40,7 @@ def get_args_parser():
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
-    parser.add_argument('--model', default='vit_base_patch16', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='build_AST', type=str, metavar='MODEL',
                         help='Name of model to train')
 
     parser.add_argument('--input_size', default=224, type=int,

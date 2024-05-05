@@ -47,11 +47,11 @@ class PatchEmbed_new(nn.Module):
         x = x.transpose(1, 2) # 32, 768, 1212 -> 32, 1212, 768
         return x
 
-class VisionTransformer(_VisionTransformer):
+class SpatialAST(_VisionTransformer):
     """ Vision Transformer with support for global average pooling
     """
     def __init__(self, num_cls_tokens=3, **kwargs):
-        super(VisionTransformer, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         img_size = (1024, 128) # 1024, 128
         in_chans = 1
         emb_dim = 768
@@ -202,8 +202,8 @@ class VisionTransformer(_VisionTransformer):
         return classifier, distance, azimuth, elevation
 
 
-def vit_base_patch16(**kwargs):
-    model = VisionTransformer(
+def build_AST(**kwargs):
+    model = SpatialAST(
         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model

@@ -17,7 +17,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch \
     --nproc_per_node=4 --use_env main_finetune.py \
     --log_dir /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/eval \
     --output_dir /hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/eval \
-    --model vit_base_patch16 \
+    --model build_AST \
     --dataset $dataset \
     --audioset_train $audioset_train_json \
     --audioset_eval $audioset_eval_json \
