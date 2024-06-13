@@ -75,6 +75,11 @@ class SpatialAST(_VisionTransformer):
             n_fft=1024, hop_length=320, win_length=1024, window='hann', 
             center=True, pad_mode='reflect', freeze_parameters=True
         )
+        
+        import librosa
+        self.melW = librosa.filters.mel(
+            sr=32000, n_fft=1024, n_mels=128, fmin=50, fmax=14000
+        )
         self.logmel_extractor = LogmelFilterBank(
             sr=32000, n_fft=1024, n_mels=128, fmin=50, 
             fmax=14000, ref=1.0, amin=1e-10, top_db=None, freeze_parameters=True

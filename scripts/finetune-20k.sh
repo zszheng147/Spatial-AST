@@ -26,8 +26,8 @@ log_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/20k/binaural/te
 mkdir -p $output_dir
 # cp /hpc_stor03/sjtu_home/zhisheng.zheng/AudioMAE-fusion/models_vit.py $output_dir/
 # cp /hpc_stor03/sjtu_home/zhisheng.zheng/AudioMAE-fusion/engine_finetune_as.py $output_dir/
-# -m debugpy --listen 55555 --wait-for-client
-python -m torch.distributed.launch \
+# 
+python -m debugpy --listen 55555 --wait-for-client -m torch.distributed.launch \
     --nproc_per_node=4 --master_port=24432 --use_env main_finetune.py \
 	--log_dir $log_dir \
 	--output_dir $output_dir \
