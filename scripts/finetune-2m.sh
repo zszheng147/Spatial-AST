@@ -8,29 +8,29 @@ mask_t_prob=0.25
 mask_f_prob=0.25
 
 # Download from https://drive.google.com/file/d/1ni_DV4dRf7GxM8k-Eirx71WP9Gg89wwu/view?usp=share_link
-ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/models/audiomae/pretrained.pth
+ckpt=/path/to/audiomae/pretrained.pth
 
 # Sound source
 dataset=audioset
-audio_path_root=/data/shared/AudioSet
-audioset_label=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/metadata/class_labels_indices_subset.csv
-audioset_train_json=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/metadata/balanced.json
-audioset_train_weight=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/metadata/weights/balanced_weight.csv
-audioset_eval_json=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/metadata/eval.json
+audio_path_root=/path/to/AudioSet # https://github.com/zszheng147/Spatial-AST/tree/main#audioset-anechoic-audio-source
+audioset_label=/path/to/metadata/class_labels_indices_subset.csv
+audioset_train_json=/path/to/metadata/balanced.json
+audioset_train_weight=/path/to/metadata/weights/balanced_weight.csv
+audioset_eval_json=/path/to/metadata/eval.json
 
 # For reverberation data, please visit https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip
 reverb_type=$1 # or mono
-reverb_path_root=/data/shared/zsz01/SpatialAudio/reverb/mp3d
-reverb_train_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/train_reverberation.json
-reverb_val_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/eval_reverberation.json
+reverb_path_root=/path/to/mp3d_reverb # https://github.com/zszheng147/Spatial-AST/tree/main?tab=readme-ov-file#reverberation
+reverb_train_json=/path/to/mp3d_reverb/train_reverberation.json
+reverb_val_json=/path/to/mp3d_reverb/mp3d/eval_reverberation.json
 
 # logging path
-output_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/test
-log_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/2m/binaural/test/log
+output_dir=./outputs/debug
+log_dir=./outputs/debug/log
 
 mkdir -p $output_dir
 
-python -m debugpy --listen 55555 --wait-for-client -m torch.distributed.launch \
+python -m torch.distributed.launch \
     --nproc_per_node=4 --master_port=54633 --use_env main_finetune.py \
     --log_dir $log_dir --output_dir $output_dir \
     --model build_AST --dataset $dataset --finetune $ckpt \

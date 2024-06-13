@@ -32,6 +32,9 @@ AudioSet
 │   │   ├── Y00AGIhlv-w0.wav
 │   │   ├── ...
 ```
+#### Weights
+Please refer to [weights-generation](https://github.com/zszheng147/Spatial-AST/blob/main/data/audioset-weight/gen_weight.py).
+
 ### Reverberation
 Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip) and download manually. Below is an example of the directory structure of the reverberation data.
 ```bash
@@ -58,15 +61,24 @@ Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/Spa
 Training from scratch is pretty simple and easy. 
 ```bash
 reverb_type=binaural # or mono / ambisonics (will be supported soon)
-bash scripts/finetune-2m.sh $reverb_type
+bash scripts/finetune-20k.sh $reverb_type
+# bash scripts/finetune-2m.sh $reverb_type (if you do have 2M AudioSet data)
 ```
 
 ## Inference
-We provide pretrained [checkpoint](https://huggingface.co/zhisheng01/Bat/blob/main/spatial-ast.pth).
-You can do inference basically by 
+We provide a finetuned [checkpoint](https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/SpatialAST/finetuned.pth).
+You can do inference by 
 ```bash
-# remember to replace `ckpt` variable with your local path
 bash scripts/inf.sh
+
+# [11:38:56] Test:  [ 0/34]  eta: 0:02:28    time: 4.3705  data: 1.5862  max mem: 3805
+# [11:39:15] Test:  [33/34]  eta: 0:00:00    time: 0.5546  data: 0.0026  max mem: 3850
+# [11:39:15] Test: Total time: 0:00:23 (0.6922 s / it)
+# [11:39:22] mAP: 0.497411
+# [11:39:23] Accuracy of the network on the 17148 test images: 0.4974
+# [11:39:23] distance accuracy: 67.62
+# [11:39:23] doa error (20 degree): 24.21
+# [11:39:23] doa angular error: 18.00
 ```
 ## TODO
 The TODOs left will be completed before the end of June 2024.

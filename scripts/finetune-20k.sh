@@ -7,52 +7,40 @@ blr=1e-3
 mask_t_prob=0.25
 mask_f_prob=0.25
 
+# Download from https://drive.google.com/file/d/1ni_DV4dRf7GxM8k-Eirx71WP9Gg89wwu/view?usp=share_link
+ckpt=/path/to/audiomae/pretrained.pth
+
+# Sound source
 dataset=audioset
-ckpt=/hpc_stor03/sjtu_home/zhisheng.zheng/models/audiomae/pretrained.pth
+audio_path_root=/path/to/AudioSet # https://github.com/zszheng147/Spatial-AST/tree/main#audioset-anechoic-audio-source
+audioset_label=/path/to/metadata/class_labels_indices_subset.csv
+audioset_train_json=/path/to/metadata/balanced.json
+audioset_eval_json=/path/to/metadata/eval.json
 
-audio_path_root=/hpc_stor03/public/shared/data/raa/AudioSet
-audioset_label=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/class_whitelist_encoder.csv
-audioset_train_json=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/balanced_no_missing.json
-audioset_eval_json=/hpc_stor03/sjtu_home/zhisheng.zheng/data/audioset/eval_no_missing.json
+# For reverberation data, please visit https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip
+reverb_type=$1 # or mono
+reverb_path_root=/path/to/mp3d_reverb # https://github.com/zszheng147/Spatial-AST/tree/main?tab=readme-ov-file#reverberation
+reverb_train_json=/path/to/mp3d_reverb/train_reverberation.json
+reverb_val_json=/path/to/mp3d_reverb/mp3d/eval_reverberation.json
 
-reverb_type=binaural
-reverb_path_root=/data/shared/zsz01/SpatialAudio/reverb/mp3d
-reverb_train_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/train_reverberation.json
-reverb_val_json=/data/shared/zsz01/SpatialAudio/reverb/mp3d/eval_reverberation.json
-
-output_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/20k/binaural/test
-log_dir=/hpc_stor03/sjtu_home/zhisheng.zheng/Spatial-AST/outputs/20k/binaural/test/log
+output_dir=./outputs/debug
+log_dir=./outputs/debug/log
 
 mkdir -p $output_dir
-# cp /hpc_stor03/sjtu_home/zhisheng.zheng/AudioMAE-fusion/models_vit.py $output_dir/
-# cp /hpc_stor03/sjtu_home/zhisheng.zheng/AudioMAE-fusion/engine_finetune_as.py $output_dir/
-# 
-python -m debugpy --listen 55555 --wait-for-client -m torch.distributed.launch \
+
+python -m torch.distributed.launch \
     --nproc_per_node=4 --master_port=24432 --use_env main_finetune.py \
-	--log_dir $log_dir \
-	--output_dir $output_dir \
-    --model build_AST \
-    --dataset $dataset \
+	--log_dir $log_dir --output_dir $output_dir --finetune $ckpt \
+    --model build_AST --dataset $dataset \
     --audio_path_root $audio_path_root \
-    --audioset_train $audioset_train_json \
-    --audioset_eval $audioset_eval_json \
+    --audioset_train $audioset_train_json --audioset_eval $audioset_eval_json \
     --label_csv $audioset_label \
-    --reverb_path_root $reverb_path_root \
-    --reverb_train $reverb_train_json \
-    --reverb_val $reverb_val_json \
-    --reverb_type $reverb_type \
-    --finetune $ckpt \
-    --blr $blr \
-    --dist_eval \
-    --batch_size 64 \
-    --num_workers 4 \
-    --roll_mag_aug \
-    --mixup 0.5 \
-    --mask_t_prob $mask_t_prob \
-    --mask_f_prob $mask_f_prob \
-    --first_eval_ep 0 \
-    --epochs 50 \
-    --warmup_epochs 5 \
-    --mask_2d \
     --nb_classes 355 \
-    --audio_normalize \
+    --reverb_path_root $reverb_path_root --reverb_type $reverb_type \
+    --reverb_train $reverb_train_json --reverb_val $reverb_val_json \
+    --blr $blr --dist_eval --batch_size 64 --num_workers 4 \
+    --roll_mag_aug --mixup 0.5 --audio_normalize \
+    --mask_t_prob $mask_t_prob --mask_f_prob $mask_f_prob \
+    --first_eval_ep 0 --epochs 50 --warmup_epochs 5 \
+    --mask_2d 
+    

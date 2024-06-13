@@ -46,9 +46,9 @@ def gen_weight(json_file, label_file, output_file):
 
 if __name__ == '__main__':
     #args = parser.parse_args()
-    json_file='/saltpool0/data/zhisheng/audioset/balanced_no_missing.json'
-    label_file='/saltpool0/data/zhisheng/audioset/class_whitelist_encoder.csv'
-    output_file='/saltpool0/data/zhisheng/audioset/distributed/balanced.csv'
+    json_file = "/path/to/metadata/balanced.json" # or unbalanced
+    label_file="/path/to/metadata/class_labels_indices_subset.csv"
+    output_file="/path/to/metadata/weights/balanced_weight.csv"
     gen_weight(json_file, label_file, output_file)
 
 
