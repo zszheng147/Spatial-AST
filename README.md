@@ -15,7 +15,7 @@ bash timm_patch/patch.sh
 
 ## Data Preparation
 ### AudioSet (Anechoic Audio Source)
-We provide `Balanced train` and `Evaluation` set for your convenience. You can download from [SpatialSound](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet). 
+We provide `Balanced train` and `Evaluation` set for your convenience. You can download from [SpatialSounds](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet). 
 For the `Unbalanced train` set, please refer to [Official AudioSet](https://research.google.com/audioset/download.html).
 
 Metadata can be downloaded from [metadata](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet/metadata).
