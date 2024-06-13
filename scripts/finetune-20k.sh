@@ -30,7 +30,7 @@ mkdir -p $output_dir
 
 python -m torch.distributed.launch \
     --nproc_per_node=4 --master_port=24432 --use_env main_finetune.py \
-	--log_dir $log_dir --output_dir $output_dir --finetune $ckpt \
+    --log_dir $log_dir --output_dir $output_dir --finetune $ckpt \
     --model build_AST --dataset $dataset \
     --audio_path_root $audio_path_root \
     --audioset_train $audioset_train_json --audioset_eval $audioset_eval_json \
