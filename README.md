@@ -33,7 +33,7 @@ AudioSet
 │   │   ├── ...
 ```
 #### Weights
-Please refer to [weights-generation](https://github.com/zszheng147/Spatial-AST/blob/main/data/audioset-weight/gen_weight.py).
+Please refer to [weights-generation](https://github.com/zszheng147/Spatial-AST/blob/main/data/audioset-weight/gen_weight.py) or use the [one](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet/metadata) we provided.
 
 ### Reverberation
 Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip) and download manually. Below is an example of the directory structure of the reverberation data.
