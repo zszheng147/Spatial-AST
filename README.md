@@ -58,7 +58,6 @@ Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/Spa
 ```
 
 ## Train a new model
-Training from scratch is pretty simple and easy. 
 ```bash
 reverb_type=binaural # or mono / ambisonics (will be supported soon)
 bash scripts/finetune-20k.sh $reverb_type
