@@ -154,7 +154,7 @@ def get_args_parser():
     parser.add_argument("--use_soft", type=bool, default=False)
     parser.add_argument('--audio_normalize', action='store_true', help='normalize the audio')
 
-    #parser.add_argument("--distributed", type=bool, default=True)
+    parser.add_argument("--distributed", type=bool, default=True)
     parser.add_argument('--first_eval_ep', default=0, type=int, help='do eval after first_eval_ep')
     parser.add_argument('--use_custom_patch', action='store_true', default=False, help='use custom patch with overlapping and override timm PatchEmbed')
     parser.add_argument('--source_custom_patch', action='store_true', default=False, help='the pre-trained model already use custom patch')
