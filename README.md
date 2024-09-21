@@ -15,10 +15,10 @@ bash timm_patch/patch.sh
 
 ## Data Preparation
 ### AudioSet (Anechoic Audio Source)
-We provide `Balanced train` and `Evaluation` set for your convenience. You can download from [SpatialSounds](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet). 
+We provide `Balanced train` and `Evaluation` set for your convenience. You can download from [SpatialAudio](https://huggingface.co/datasets/zhisheng01/SpatialAudio/tree/main/SpatialSoundQA/AudioSet). 
 For the `Unbalanced train` set, please refer to [Official AudioSet](https://research.google.com/audioset/download.html).
 
-Metadata can be downloaded from [metadata](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet/metadata).
+Metadata can be downloaded from [metadata](https://huggingface.co/datasets/zhisheng01/SpatialAudio/tree/main/SpatialSoundQA/AudioSet/metadata).
 ```
 AudioSet
 ├── balanced_train
@@ -33,10 +33,10 @@ AudioSet
 │   │   ├── ...
 ```
 #### Weights
-Please refer to [weights-generation](https://github.com/zszheng147/Spatial-AST/blob/main/data/audioset-weight/gen_weight.py) or use [the one](https://huggingface.co/datasets/zhisheng01/SpatialSounds/tree/main/AudioSet/metadata/weights) we provided.
+Please refer to [weights-generation](https://github.com/zszheng147/Spatial-AST/blob/main/data/audioset-weight/gen_weight.py) or use [the one](https://huggingface.co/datasets/zhisheng01/SpatialAudio/tree/main/SpatialSoundQA/AudioSet/metadata/weights) we provided.
 
 ### Reverberation
-Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip) and download manually. Below is an example of the directory structure of the reverberation data.
+Please visit [mp3d_reverberation](https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/mp3d_reverb.zip) and download manually. Below is an example of the directory structure of the reverberation data.
 ```bash
 /path/to/reverb_root
 ├── train_reverberation.json
@@ -65,7 +65,7 @@ bash scripts/finetune-20k.sh $reverb_type
 ```
 
 ## Inference
-We provide a finetuned [checkpoint](https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/SpatialAST/finetuned.pth).
+We provide a finetuned [checkpoint](https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialAST/finetuned.pth).
 You can do inference by 
 ```bash
 bash scripts/inf.sh
