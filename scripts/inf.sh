@@ -1,19 +1,19 @@
 #!/bin/bash
 
 dataset=audioset
-ckpt=/path/to/trained_ckpt # Path to the finetuned model
+ckpt=/path/to/trained_ckpt # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialAST/finetuned.pth
 
-# https://github.com/zszheng147/Spatial-AST/tree/main#audioset-anechoic-audio-source
+# Sound source
 dataset=audioset
-audio_path_root=/path/to/AudioSet # https://github.com/zszheng147/Spatial-AST/tree/main#audioset-anechoic-audio-source
-audioset_label=/path/to/metadata/class_labels_indices_subset.csv
-audioset_train_json=/path/to/metadata/balanced.json
-audioset_train_weight=/path/to/metadata/weights/balanced_weight.csv
-audioset_eval_json=/path/to/metadata/eval.json
+audio_path_root=/path/to/AudioSet # https://huggingface.co/datasets/zhisheng01/SpatialAudio/tree/main/SpatialSoundQA/AudioSet
+audioset_label=/path/to/metadata/class_labels_indices_subset.csv # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/class_labels_indices_subset.csv
+audioset_train_json=/path/to/metadata/balanced.json # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/balanced.json
+audioset_train_weight=/path/to/metadata/weights/balanced_weight.csv # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/weights/balanced_weight.csv
+audioset_eval_json=/path/to/metadata/eval.json # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/eval.json
 
-# For reverberation data, please visit https://huggingface.co/datasets/zhisheng01/SpatialSounds/blob/main/mp3d_reverb.zip
+# For reverberation data, please visit https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/mp3d_reverb.zip
 reverb_type=$1 # or mono
-reverb_path_root=/path/to/mp3d_reverb # https://github.com/zszheng147/Spatial-AST/tree/main?tab=readme-ov-file#reverberation
+reverb_path_root=/path/to/mp3d_reverb # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/mp3d_reverb.zip
 reverb_train_json=/path/to/mp3d_reverb/train_reverberation.json
 reverb_val_json=/path/to/mp3d_reverb/mp3d/eval_reverberation.json
 

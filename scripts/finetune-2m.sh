@@ -14,8 +14,8 @@ ckpt=/path/to/audiomae/pretrained.pth
 dataset=audioset
 audio_path_root=/path/to/AudioSet # https://huggingface.co/datasets/zhisheng01/SpatialAudio/tree/main/SpatialSoundQA/AudioSet
 audioset_label=/path/to/metadata/class_labels_indices_subset.csv # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/class_labels_indices_subset.csv
-audioset_train_json=/path/to/metadata/balanced.json # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/balanced.json
-audioset_train_weight=/path/to/metadata/weights/balanced_weight.csv # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/weights/balanced_weight.csv
+audioset_train_json=/path/to/metadata/unbalanced.json # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/unbalanced.json
+audioset_train_weight=/path/to/metadata/weights/unbalanced_weight.csv # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/weights/unbalanced_weight.csv
 audioset_eval_json=/path/to/metadata/eval.json # https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/AudioSet/metadata/eval.json
 
 # For reverberation data, please visit https://huggingface.co/datasets/zhisheng01/SpatialAudio/blob/main/SpatialSoundQA/mp3d_reverb.zip
@@ -25,8 +25,8 @@ reverb_train_json=/path/to/mp3d_reverb/train_reverberation.json
 reverb_val_json=/path/to/mp3d_reverb/mp3d/eval_reverberation.json
 
 # logging path
-output_dir=./outputs/debug
-log_dir=./outputs/debug/log
+output_dir=./outputs/finetune-2m
+log_dir=./outputs/finetune-2m/log
 
 mkdir -p $output_dir
 
